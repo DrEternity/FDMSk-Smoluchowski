@@ -16,6 +16,9 @@ int main()
     int size = 256;
     double rel_tol = 1e-6;
     double* n_0 = new double[size];
+    for (int i = 0; i < size; i++) {
+        n_0[i] = 0;
+    }
     n_0[0] = 1;
     double time = 1.0;
     double dt = 0.001;
@@ -23,10 +26,10 @@ int main()
 
     n_0 = modeling(size, kernel_atmos, rel_tol, n_0, time, dt, mosaic_type);
 
-    // for (int i = 0; i < size; i++) {
-    //     std::cout << n_0[i] << " ";
-    // }
-    // std::cout << std::endl;
+    for (int i = 0; i < size; i++) {
+        std::cout << n_0[i] << " ";
+    }
+    std::cout << std::endl;
 
     delete[] n_0;
 
