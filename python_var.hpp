@@ -222,6 +222,17 @@ double* modeling(unsigned int max_size,
     }
     std::cout << "MSk n_jobs (worker threads): " << n_jobs << std::endl;
 
+    // Minimum mosaic block size (min_rows = min_cols). Default 128 (the reference
+    // configuration). Configurable via env MSK_MIN_BLOCK. Larger block => fewer blocks
+    // => smaller convolve workspace (peak ~ 8B * sum_blocks(N-(i0+j0))), at the cost of
+    // bigger dense diagonal blocks. See ANALYSIS.md H9.
+    uint64_t min_block = 128;
+    if (const char *env = std::getenv("MSK_MIN_BLOCK")) {
+        long v = std::atol(env);
+        if (v >= 1) min_block = static_cast<uint64_t>(v);
+    }
+    std::cout << "MSk min_block: " << min_block << std::endl;
+
     uint64_t current_size = initial_size;
     double t_current = 0.0;
     double step = first_step;
@@ -240,8 +251,8 @@ double* modeling(unsigned int max_size,
         std::cout << "\n--- Building MSk for size " << current_size << " ---" << std::endl;
 
         MSk::oracle::Parameters params;
-        params.min_rows = 128;
-        params.min_cols = 128;
+        params.min_rows = min_block;
+        params.min_cols = min_block;
         switch (mosaic_type) {
         case MosaicType::monodiag: params.rho = 1.0; break;
         case MosaicType::tridiag:  params.rho = 2.0; break;
