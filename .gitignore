@@ -18,3 +18,6 @@ logs/
 *.o
 *.swp
 .DS_Store
+
+# sweep run logs
+sweeps/*.log
