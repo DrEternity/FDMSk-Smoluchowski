@@ -67,6 +67,14 @@ int main(int argc, char* argv[]) {
     if (argc > 5) mass_threshold = std::stod(argv[5]);
     if (argc > 6) ode_tol = std::stod(argv[6]);
 
+    // MSk approximation tolerance: env MSK_REL_TOL overrides the default 1e-10.
+    // Looser tol -> lower block rank -> much less memory + faster (key for large
+    // max_size, where 1e-10 is memory-infeasible). See ANALYSIS.md H8.
+    if (const char* env = std::getenv("MSK_REL_TOL")) {
+        double v = std::atof(env);
+        if (v > 0.0) rel_tol = v;
+    }
+
     std::cout << "=== Reference Solution Generator ===" << std::endl;
     std::cout << "Kernel: Atmospheric" << std::endl;
     std::cout << "Max size: " << max_size << std::endl;
