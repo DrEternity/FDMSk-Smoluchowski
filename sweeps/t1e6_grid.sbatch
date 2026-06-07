@@ -41,7 +41,7 @@ run() {
     printf "%-9s %-5s %-12s %-9s %-12s %-9s\n" "$MB" "$NJ" "${wall:-ERR}" "$gb" "${mass:-?}" "${fsz:-?}"
 }
 
-for MB in 128 256 512 1024; do
+for MB in 128 256 512 1024 2048; do
     for NJ in 4 8 16 32; do
         run $MB $NJ
     done
