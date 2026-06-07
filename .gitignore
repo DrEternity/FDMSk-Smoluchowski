@@ -1,0 +1,14 @@
+# Build artifacts and fetched dependencies (large, regenerable)
+build/
+external/
+
+# Reference solutions / outputs (24 MB each)
+*reference_solution_*.txt
+ballistic_test*.txt
+*.out
+logs/
+
+# Editor / OS
+*.o
+*.swp
+.DS_Store
