@@ -2,6 +2,7 @@
 #define MOSAIC_SKELETON_MATRIX_PARTICLES_HPP
 
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <chrono>
 #include <algorithm>
@@ -212,6 +213,15 @@ double* modeling(unsigned int max_size,
         return kernel(i + 1, j + 1);
     };
 
+    // Number of worker threads for MSk (block-parallel approximation + matvec/convolve).
+    // Configurable via env MSK_NJOBS; default 1 preserves the original baseline behaviour.
+    uint64_t n_jobs = 1;
+    if (const char *env = std::getenv("MSK_NJOBS")) {
+        long v = std::atol(env);
+        if (v >= 1) n_jobs = static_cast<uint64_t>(v);
+    }
+    std::cout << "MSk n_jobs (worker threads): " << n_jobs << std::endl;
+
     uint64_t current_size = initial_size;
     double t_current = 0.0;
     double step = first_step;
@@ -244,7 +254,7 @@ double* modeling(unsigned int max_size,
         MSk::matrix::Elementary<double> matrix(current_size, current_size, new_kernel);
 
         auto t_approx_start = std::chrono::steady_clock::now();
-        auto msk = MSk::MosaicSkeleton<double>::approximate(matrix, oracle, 1);
+        auto msk = MSk::MosaicSkeleton<double>::approximate(matrix, oracle, n_jobs);
         auto t_approx_end = std::chrono::steady_clock::now();
         double t_approx = std::chrono::duration<double>(t_approx_end - t_approx_start).count();
 

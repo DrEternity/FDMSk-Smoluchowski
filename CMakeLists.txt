@@ -2,6 +2,19 @@ cmake_minimum_required(VERSION 3.20)
 project(mosaic_skeleton_examples
         LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 11)
+
+# --- Optimization defaults (see ANALYSIS.md H2: -O3 -march gives ~1.72x) ---
+# Default to an optimized build; the baseline had an empty build type (-O0).
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+# Tune for the host CPU (Cascade Lake / AVX-512 on the target cluster). Safe when
+# the build machine == run machine. Applied before FetchContent so it also reaches
+# the zaimsk subproject. Disable with -DSMOL_NATIVE=OFF for a portable binary.
+option(SMOL_NATIVE "Compile with -march=native -mtune=native" ON)
+if(SMOL_NATIVE)
+    add_compile_options(-march=native -mtune=native)
+endif()
 if(NOT TARGET zaimsk)
         find_package(zaimsk)
 endif()

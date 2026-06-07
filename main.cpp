@@ -86,12 +86,14 @@ int main(int argc, char* argv[]) {
     std::cout << "Initial condition: n[0] = " << n_0[0] << ", others = 0" << std::endl;
     std::cout << "Starting ODE integration..." << std::endl;
 
-    //MosaicType mosaic_type{MosaicType::tridiag};
-    //double* n_solution = modeling(max_size, kernel_atmos, rel_tol, n_0, time, dt,
-    //                              mosaic_type, initial_size, mass_threshold, ode_tol);
-    MosaicType mosaic_type{MosaicType::monodiag};
-    double* n_solution = modeling(max_size, kernel_ballistic, rel_tol, n_0, time, dt,
+    // Atmospheric kernel + tridiag (rho=2.0): the configuration used to generate
+    // the reference_solution_atmos / new_reference_solution_atmos series.
+    MosaicType mosaic_type{MosaicType::tridiag};
+    double* n_solution = modeling(max_size, kernel_atmos, rel_tol, n_0, time, dt,
                                   mosaic_type, initial_size, mass_threshold, ode_tol);
+    //MosaicType mosaic_type{MosaicType::monodiag};
+    //double* n_solution = modeling(max_size, kernel_ballistic, rel_tol, n_0, time, dt,
+    //                              mosaic_type, initial_size, mass_threshold, ode_tol);
 
 
     // Print summary

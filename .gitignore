@@ -1,6 +1,12 @@
 # Build artifacts and fetched dependencies (large, regenerable)
 build/
+build_release/
+build_*/
 external/
+
+# Sweep outputs (large solution dumps); keep scripts + result tables
+sweeps/out/
+sweeps/*.out
 
 # Reference solutions / outputs (24 MB each)
 *reference_solution_*.txt
