@@ -201,37 +201,21 @@ enum class MosaicType {
 // ---------------------------------------------------------------------------
 // Main modeling function with adaptive matrix sizing
 // ---------------------------------------------------------------------------
+// Hyperparameters are passed explicitly (see config.hpp / SolverConfig). The previous
+// scattered getenv() reads were moved to config.hpp; modeling() is now pure plumbing.
 double* modeling(unsigned int max_size,
                  std::function<double(double, double)> kernel,
                  double rel_tol, double *n_0, double time, double first_step,
-                 MosaicType mosaic_type = MosaicType::monodiag,
+                 MosaicType mosaic_type = MosaicType::tridiag,
                  unsigned int initial_size = 512,
-                 double mass_threshold = 1e-2,
-                 double ode_tol = 1e-4) {
+                 double ode_tol = 1e-6,
+                 uint64_t n_jobs = 1,
+                 uint64_t min_block = 128,
+                 uint64_t max_rank = 0) {
 
     auto new_kernel = [kernel](uint64_t i, uint64_t j) {
         return kernel(i + 1, j + 1);
     };
-
-    // Number of worker threads for MSk (block-parallel approximation + matvec/convolve).
-    // Configurable via env MSK_NJOBS; default 1 preserves the original baseline behaviour.
-    uint64_t n_jobs = 1;
-    if (const char *env = std::getenv("MSK_NJOBS")) {
-        long v = std::atol(env);
-        if (v >= 1) n_jobs = static_cast<uint64_t>(v);
-    }
-    std::cout << "MSk n_jobs (worker threads): " << n_jobs << std::endl;
-
-    // Minimum mosaic block size (min_rows = min_cols). Default 128 (the reference
-    // configuration). Configurable via env MSK_MIN_BLOCK. Larger block => fewer blocks
-    // => smaller convolve workspace (peak ~ 8B * sum_blocks(N-(i0+j0))), at the cost of
-    // bigger dense diagonal blocks. See ANALYSIS.md H9.
-    uint64_t min_block = 128;
-    if (const char *env = std::getenv("MSK_MIN_BLOCK")) {
-        long v = std::atol(env);
-        if (v >= 1) min_block = static_cast<uint64_t>(v);
-    }
-    std::cout << "MSk min_block: " << min_block << std::endl;
 
     uint64_t current_size = initial_size;
     double t_current = 0.0;
@@ -243,7 +227,8 @@ double* modeling(unsigned int max_size,
     std::cout << "\n=== Adaptive Integration ===" << std::endl;
     std::cout << "Initial size: " << current_size << ", max size: " << max_size << std::endl;
     std::cout << "Initial mass: " << initial_mass << std::endl;
-    std::cout << "Mass threshold for resize: " << mass_threshold << std::endl;
+    std::cout << "MSk n_jobs: " << n_jobs << ", min_block: " << min_block
+              << ", max_rank: " << max_rank << std::endl;
     std::cout << "ODE tol: " << ode_tol << ", MSk rel_tol: " << rel_tol << std::endl;
 
     while (t_current < time && current_size <= static_cast<uint64_t>(max_size)) {
@@ -258,7 +243,6 @@ double* modeling(unsigned int max_size,
         case MosaicType::tridiag:  params.rho = 2.0; break;
         default: params.rho = 2.0;
         }
-        uint64_t max_rank = 0;
         params.block_comp = {0.0, rel_tol, max_rank};
 
         MSk::oracle::Elementary<double> oracle{params};

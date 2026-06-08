@@ -3,6 +3,7 @@
  */
 
 #include "python_var.hpp"
+#include "config.hpp"
 #include <iostream>
 #include <fstream>
 #include <iomanip>
@@ -50,58 +51,31 @@ void save_solution(const std::string& filename, double* n, int size, double time
 }
 
 int main(int argc, char* argv[]) {
-    int max_size = 65536;
-    double time = 1000.0;
-    double dt = 0.0001;
-    double rel_tol = 1e-10;
-    double ode_tol = 1e-6;
-    int initial_size = 512;
-    double mass_threshold = 1e-2;
-    std::string output_file = "reference_solution_atmos.txt";
+    // All hyperparameters live in one place now: SolverConfig (config.hpp).
+    // Defaults -> legacy positional CLI -> environment variables (env wins).
+    SolverConfig cfg = load_config(argc, argv);
+    print_config(cfg);
 
-    // Parse: max_size time output_file initial_size mass_threshold ode_tol
-    if (argc > 1) max_size = std::stoi(argv[1]);
-    if (argc > 2) time = std::stod(argv[2]);
-    if (argc > 3) output_file = argv[3];
-    if (argc > 4) initial_size = std::stoi(argv[4]);
-    if (argc > 5) mass_threshold = std::stod(argv[5]);
-    if (argc > 6) ode_tol = std::stod(argv[6]);
-
-    // MSk approximation tolerance: env MSK_REL_TOL overrides the default 1e-10.
-    // Looser tol -> lower block rank -> much less memory + faster (key for large
-    // max_size, where 1e-10 is memory-infeasible). See ANALYSIS.md H8.
-    if (const char* env = std::getenv("MSK_REL_TOL")) {
-        double v = std::atof(env);
-        if (v > 0.0) rel_tol = v;
-    }
-
-    std::cout << "=== Reference Solution Generator ===" << std::endl;
-    std::cout << "Kernel: Atmospheric" << std::endl;
-    std::cout << "Max size: " << max_size << std::endl;
-    std::cout << "Initial size: " << initial_size << std::endl;
-    std::cout << "Time: " << time << std::endl;
-    std::cout << "MSk tolerance: " << rel_tol << std::endl;
-    std::cout << "ODE tolerance: " << ode_tol << std::endl;
-    std::cout << "Mass threshold: " << mass_threshold << std::endl;
-    std::cout << "dt: " << dt << std::endl;
-    std::cout << "Output: " << output_file << std::endl;
-    std::cout << "====================================\n" << std::endl;
+    // Convenience locals reused by the summary/save code below.
+    const int max_size = cfg.max_size;
+    const double time = cfg.time;
+    const std::string output_file = cfg.output_file;
 
     // Initial condition: monodisperse (allocate max_size, zero-initialized)
     double* n_0 = new double[max_size]();
     n_0[0] = 1.0;
 
-    std::cout << "Initial condition: n[0] = " << n_0[0] << ", others = 0" << std::endl;
+    std::cout << "Initial condition: n[0] = 1, others = 0" << std::endl;
     std::cout << "Starting ODE integration..." << std::endl;
 
-    // Atmospheric kernel + tridiag (rho=2.0): the configuration used to generate
-    // the reference_solution_atmos / new_reference_solution_atmos series.
-    MosaicType mosaic_type{MosaicType::tridiag};
-    double* n_solution = modeling(max_size, kernel_atmos, rel_tol, n_0, time, dt,
-                                  mosaic_type, initial_size, mass_threshold, ode_tol);
-    //MosaicType mosaic_type{MosaicType::monodiag};
-    //double* n_solution = modeling(max_size, kernel_ballistic, rel_tol, n_0, time, dt,
-    //                              mosaic_type, initial_size, mass_threshold, ode_tol);
+    std::function<double(double, double)> kernel =
+        cfg.kernel ? std::function<double(double, double)>(kernel_ballistic)
+                   : std::function<double(double, double)>(kernel_atmos);
+    MosaicType mosaic_type = cfg.mosaic ? MosaicType::tridiag : MosaicType::monodiag;
+
+    double* n_solution = modeling(max_size, kernel, cfg.rel_tol, n_0, time, cfg.dt,
+                                  mosaic_type, cfg.initial_size, cfg.ode_tol,
+                                  cfg.n_jobs, cfg.min_block, cfg.max_rank);
 
 
     // Print summary
