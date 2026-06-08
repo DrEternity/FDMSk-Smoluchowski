@@ -31,7 +31,10 @@ MAX=8388608        # 2^23
 T=10000000         # 1e7
 TOL=1e-6           # ODE tol (mass conservation is set by grid size, not this)
 RELTOL=${RELTOL:-1e-5}
-NJ=${NJ:-2}
+# Optimum from the t=1e7 config sweep (ANALYSIS.md): mb=1024 minimises memory AND time;
+# nj=4 is the fastest that fits (1976s, peak 280GB). For more headroom use nj=3 (2380s,
+# 208GB) or nj=2 (3223s, 152GB). nj>=8 OOMs at 2^23 (convolve pile-up).
+NJ=${NJ:-4}
 MB=${MB:-1024}
 GUARD_MB=${GUARD_MB:-350000}   # stop cleanly if used memory exceeds ~350GB
 OUTFILE=$ROOT/build/new_reference_solution_atmos_T10000000.txt
