@@ -91,6 +91,19 @@ cmake --build build --target example -j 16
 see the ready-made scripts in `sweeps/` (they pin threads and add a memory guard).
 </details>
 
+### Paths — you do NOT edit any file
+
+The scripts find the repo on their own, so there are **no paths to change in the code**:
+`sweeps/bench.sh` locates the repo from its own location, and the SLURM scripts use
+`$SLURM_SUBMIT_DIR` — just run `sbatch` **from the repo root**. The only things you might
+set in your shell:
+
+- **On the `nieve` cluster:** export the `PATH` / `LD_LIBRARY_PATH` from the box above
+  (needed to build and to run). Nothing else.
+- **On another machine:** build normally; if the runtime libraries are not found, point the
+  scripts at your own BLAS / FFTW / libstdc++ once via
+  `export SMOL_LIBS=/your/lib1:/your/lib2` (otherwise they default to the cluster paths).
+
 ---
 
 ## Run
