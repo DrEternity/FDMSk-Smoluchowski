@@ -619,6 +619,10 @@ Job 44950 (`max_size=2^23, ode_tol=1e-6, nj=16`) прошёл до size 1048576 
   начинай с `ode_tol≈1e-9…1e-10`, и только если масса держится — ослабляй ради скорости.
 - Если шаг всё равно растёт неограниченно — это сигнал, что нужен ещё меньше tol (или
   кап на max-step в коде, если tol не справляется).
+- **🛡 В солвер встроен СТРАЖ МАССЫ:** если `mass > initial·SMOL_MASS_GUARD` (дефолт
+  1.02), прогон аварийно останавливается с сообщением «reduce ode_tol» — не ждёт разгона
+  до 1.9 и не жжёт ноду часами. Env `SMOL_MASS_GUARD` (значение ≤1 отключает страж).
+  Это операционализация урока: первый признак неустойчивости — рост массы выше 1.
 
 ### Шаг 2. РАЗМЕР СЕТКИ (`max_size`) — фронт и сохранение массы
 Масса сохраняется только если значимый «фронт» (где ~99.9% массы) НИЖЕ верха сетки.
@@ -729,7 +733,9 @@ probe, чем потерять часы на OOM-kill в конце.
   min_block/max_rank явными аргументами), `Smoluch` (RHS), `runge_kutta4_adaptive_mass`.
 - [sweeps/mc_compare.py](sweeps/mc_compare.py) — сравнение det-решения с MC (.dat).
 - [bench.cpp](src/bench.cpp) — микро-бенч approx/matvec/convolve по min_block.
-- [CMakeLists.txt](CMakeLists.txt) — сборка; **нет default build type → H2**.
+- [CMakeLists.txt](CMakeLists.txt) — сборка; дефолт `Release` + опция `SMOL_NATIVE`
+  (`-march=native`), фетчит `zaimsk` (FetchContent). Реализовано по H2.
+- [sweeps/bench.sh](sweeps/bench.sh) — регрессионный бенч (оба ядра: mass + корректность).
 - `build/*reference_solution_atmos_T*.txt` — эталоны (не коммитить, 24 МБ).
 - `build/slurm-1854{3,4}.out` — production-логи (reference / new_reference).
 - `external/mosaic-skeleton/` — библиотека MSk (НЕ трогаем).

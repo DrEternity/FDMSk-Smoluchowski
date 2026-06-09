@@ -83,7 +83,8 @@ inline double compute_mass(const double* n, uint64_t size) {
 // ---------------------------------------------------------------------------
 enum class StepperResult {
     finished,       // reached T
-    mass_dropped    // mass dropped below threshold => need resize
+    mass_dropped,   // front reached size/2 => need resize
+    diverged        // mass grew past the guard => numerical instability, abort
 };
 
 template<typename RealType, class Operator>
@@ -91,8 +92,9 @@ StepperResult runge_kutta4_adaptive_mass(
         uint64_t size, Operator &A, RealType *y,
         RealType T_total,          // total end time (absolute)
         RealType &t_current,       // current time (in/out)
-        RealType &step,
-	RealType tol)            // current step size (in/out)
+        RealType &step,            // current step size (in/out)
+        RealType tol,              // step-error tolerance (ode_tol)
+        RealType mass_limit)       // abort if mass exceeds this (instability guard)
 {
     SmartArray<RealType> y_step(size), A_y_step(size), dy(size), dy_check(size);
 
@@ -152,9 +154,23 @@ StepperResult runge_kutta4_adaptive_mass(
 	    }
             ++steps_hit;
 
+	    // --- Mass-divergence guard (explicit RK4 stability) ---
+	    // Coagulation can only conserve or lose mass; any GROWTH is numerical
+	    // instability (step beyond the explicit-stability limit, amplified by the
+	    // y<0->0 clamp). Catch it early instead of wasting a long run. See ANALYSIS
+	    // Part VII / the ballistic stiffness lesson.
+            double total = compute_mass(y, size);
+            if (std::isnan(total) || total > mass_limit) {
+                t_current += t_local;
+                std::cout << "  *** ABORT: mass = " << total << " exceeds guard "
+                          << mass_limit << " — numerical INSTABILITY (explicit RK4 step "
+                          << "too large for this kernel). Reduce ode_tol "
+                          << "(stiff kernels need ~1e-9...1e-10). ***" << std::endl;
+                return StepperResult::diverged;
+            }
+
 	    // --- Front check after accepted step ---
             double cumulative = 0.0;
-            double total = compute_mass(y, size);
             uint64_t i_front = 0;
             for (uint64_t i = 0; i < size; i++) {
                 cumulative += y[i] * static_cast<double>(i + 1);
@@ -211,7 +227,8 @@ double* modeling(unsigned int max_size,
                  double ode_tol = 1e-6,
                  uint64_t n_jobs = 1,
                  uint64_t min_block = 128,
-                 uint64_t max_rank = 0) {
+                 uint64_t max_rank = 0,
+                 double mass_guard = 1.02) {  // abort if mass exceeds initial*mass_guard
 
     auto new_kernel = [kernel](uint64_t i, uint64_t j) {
         return kernel(i + 1, j + 1);
@@ -221,6 +238,8 @@ double* modeling(unsigned int max_size,
     double t_current = 0.0;
     double step = first_step;
     double initial_mass = compute_mass(n_0, max_size);
+    // instability guard threshold (mass_guard <= 1 disables the check)
+    double mass_limit = (mass_guard > 1.0) ? initial_mass * mass_guard : HUGE_VAL;
 
     auto t_global_start = std::chrono::steady_clock::now();
 
@@ -268,13 +287,19 @@ double* modeling(unsigned int max_size,
         StepperResult result = runge_kutta4_adaptive_mass<double>(
             current_size, smoluch, n_0,
             time, t_current, step,
-            ode_tol);
+            ode_tol, mass_limit);
 
         std::cout << "  RHS evaluations: " << smoluch.rhs_count()
                   << ", avg time: " << smoluch.rhs_avg_time() << " sec" << std::endl;
         std::cout << "  Current mass: " << compute_mass(n_0, current_size)
                   << ", t = " << t_current << std::endl;
 
+        if (result == StepperResult::diverged) {
+            std::cerr << "\n!!! ABORTED: mass diverged (numerical instability) at t = "
+                      << t_current << ", size = " << current_size
+                      << ". Lower ode_tol and rerun. !!!" << std::endl;
+            break;
+        }
         if (result == StepperResult::finished) {
             break;
         }
@@ -289,10 +314,10 @@ double* modeling(unsigned int max_size,
             std::cout << "\n*** Cannot resize further (max_size = " << max_size
                       << "), continuing with current size ***" << std::endl;
             // Continue with current size until time ends
-            StepperResult final_result = runge_kutta4_adaptive_mass<double>(
+            runge_kutta4_adaptive_mass<double>(
                 current_size, smoluch, n_0,
                 time, t_current, step,
-                ode_tol);  // relax threshold
+                ode_tol, mass_limit);
             break;
         }
     }

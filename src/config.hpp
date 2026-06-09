@@ -34,6 +34,7 @@ struct SolverConfig {
     // --- Time integrator (adaptive RK4 with mass/front monitoring) ---
     double      dt           = 1e-4;    // initial step size
     double      ode_tol      = 1e-6;    // step-error tolerance
+    double      mass_guard   = 1.02;    // abort if mass exceeds initial*this (instability; <=1 disables)
     // --- Mosaic-skeleton approximation ---
     double      rel_tol      = 1e-10;   // block approximation tolerance
     uint64_t    min_block    = 128;     // min mosaic block (min_rows = min_cols)
@@ -75,6 +76,7 @@ inline void config_from_env(SolverConfig& c) {
     // integrator
     if (get_d("SMOL_DT",      d) && d > 0) c.dt      = d;
     if (get_d("SMOL_ODE_TOL", d) && d > 0) c.ode_tol = d;
+    if (get_d("SMOL_MASS_GUARD", d) && d > 0) c.mass_guard = d;   // <=1 effectively disables
     // mosaic-skeleton
     if (get_d("MSK_REL_TOL",   d) && d > 0)  c.rel_tol   = d;
     if (get_i("MSK_MIN_BLOCK", i) && i >= 1) c.min_block = (uint64_t)i;
@@ -96,7 +98,8 @@ inline void print_config(const SolverConfig& c) {
               << "  max_size=" << c.max_size
               << "  initial_size=" << c.initial_size
               << "  time=" << c.time << "\n";
-    std::cout << "  [integrator] dt=" << c.dt << "  ode_tol=" << c.ode_tol << "\n";
+    std::cout << "  [integrator] dt=" << c.dt << "  ode_tol=" << c.ode_tol
+              << "  mass_guard=" << c.mass_guard << "\n";
     std::cout << "  [mosaic-MSk] rel_tol=" << c.rel_tol
               << "  min_block=" << c.min_block
               << "  max_rank=" << c.max_rank << (c.max_rank ? "" : " (unlimited)")
