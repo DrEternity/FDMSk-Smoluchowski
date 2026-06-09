@@ -44,6 +44,7 @@ run_case() {  # fields -> runs solver, echoes "wall peakMB mass finalsize outfil
     local name=$1 kernel=$2 mosaic=$3 t=$4 max=$5 init=$6 mb=$7 rel=$8 ode=$9 nj=${10}
     local out=$WORK/${name}.txt log=$WORK/${name}.log
     SMOL_KERNEL=$kernel SMOL_MOSAIC=$mosaic MSK_MIN_BLOCK=$mb MSK_REL_TOL=$rel MSK_NJOBS=$nj \
+    SMOL_QUIET=1 \
         "$BIN" "$max" "$t" "$out" "$init" 0.01 "$ode" > "$log" 2>&1 &
     local pid=$! peak=0 r
     while kill -0 $pid 2>/dev/null; do

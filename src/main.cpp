@@ -75,7 +75,8 @@ int main(int argc, char* argv[]) {
 
     double* n_solution = modeling(max_size, kernel, cfg.rel_tol, n_0, time, cfg.dt,
                                   mosaic_type, cfg.initial_size, cfg.ode_tol,
-                                  cfg.n_jobs, cfg.min_block, cfg.max_rank, cfg.mass_guard);
+                                  cfg.n_jobs, cfg.min_block, cfg.max_rank, cfg.mass_guard,
+                                  cfg.quiet);
 
 
     // Print summary

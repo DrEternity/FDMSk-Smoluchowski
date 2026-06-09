@@ -119,6 +119,7 @@ startup.
 | integrator | `SMOL_DT` | initial RK4 step | 1e-4 |
 | | `SMOL_ODE_TOL` | step-error tolerance (↓ for stiff kernels!) | 1e-6 |
 | | `SMOL_MASS_GUARD` | abort if mass exceeds initial × this (instability guard; ≤1 disables) | 1.02 |
+| | `SMOL_QUIET` | suppress the per-step `t = …` progress lines (keeps epoch markers + final summary) | off |
 | mosaic-MSk | `MSK_REL_TOL` | block approximation tolerance | 1e-10 |
 | | `MSK_MIN_BLOCK` | min mosaic block (memory/speed lever) | 128 |
 | | `MSK_MAX_RANK` | block rank cap (0 = unlimited) | 0 |

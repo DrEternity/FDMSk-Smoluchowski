@@ -94,7 +94,8 @@ StepperResult runge_kutta4_adaptive_mass(
         RealType &t_current,       // current time (in/out)
         RealType &step,            // current step size (in/out)
         RealType tol,              // step-error tolerance (ode_tol)
-        RealType mass_limit)       // abort if mass exceeds this (instability guard)
+        RealType mass_limit,       // abort if mass exceeds this (instability guard)
+        bool quiet = false)        // suppress the per-step "t = ..." progress lines
 {
     SmartArray<RealType> y_step(size), A_y_step(size), dy(size), dy_check(size);
 
@@ -109,10 +110,11 @@ StepperResult runge_kutta4_adaptive_mass(
         }
         if (t_local >= next_t_verbose) {
             RealType mass = compute_mass(y, size);
-            std::cout << "t = " << (t_current + t_local) << " :: step = " << step
-                      << ", mass = " << mass
-                      << "; steps: total = " << steps_total
-                      << ", successful = " << steps_hit << std::endl;
+            if (!quiet)
+                std::cout << "t = " << (t_current + t_local) << " :: step = " << step
+                          << ", mass = " << mass
+                          << "; steps: total = " << steps_total
+                          << ", successful = " << steps_hit << std::endl;
             if (std::isnan(mass)) {
                 break;
             }
@@ -228,7 +230,8 @@ double* modeling(unsigned int max_size,
                  uint64_t n_jobs = 1,
                  uint64_t min_block = 128,
                  uint64_t max_rank = 0,
-                 double mass_guard = 1.02) {  // abort if mass exceeds initial*mass_guard
+                 double mass_guard = 1.02,    // abort if mass exceeds initial*mass_guard
+                 bool quiet = false) {        // suppress per-step progress lines
 
     auto new_kernel = [kernel](uint64_t i, uint64_t j) {
         return kernel(i + 1, j + 1);
@@ -287,7 +290,7 @@ double* modeling(unsigned int max_size,
         StepperResult result = runge_kutta4_adaptive_mass<double>(
             current_size, smoluch, n_0,
             time, t_current, step,
-            ode_tol, mass_limit);
+            ode_tol, mass_limit, quiet);
 
         std::cout << "  RHS evaluations: " << smoluch.rhs_count()
                   << ", avg time: " << smoluch.rhs_avg_time() << " sec" << std::endl;
@@ -317,7 +320,7 @@ double* modeling(unsigned int max_size,
             runge_kutta4_adaptive_mass<double>(
                 current_size, smoluch, n_0,
                 time, t_current, step,
-                ode_tol, mass_limit);
+                ode_tol, mass_limit, quiet);
             break;
         }
     }
