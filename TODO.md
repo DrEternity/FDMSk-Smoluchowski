@@ -11,9 +11,10 @@ and **mass conservation** there, with PASS/FAIL. Reuse `run_t1e7_cfg.sbatch` /
 `run_ballistic.sbatch` patterns (memory guard + `/proc` sampling) and the SolverConfig
 env interface.
 
-## Visualization: `sweeps/plot_compare.py` (deterministic vs Monte-Carlo)
+## Visualization: `sweeps/plot_compare.py` (solution vs external reference)
 Small matplotlib script (the `smol_research` conda env has matplotlib) plotting the
-size distribution `n(size)` on log-log for det vs MC, for both kernels and several times.
-A visual check is far more intuitive than the rel-L2 number and is useful for the
-paper/slides. Inputs: the 2-column `sweeps/ballistic/conc_det_ballistic_t*.dat`
-(via `to_sizeconc.py`) and the MC `.dat` references.
+size distribution `n(size)` on log-log for the deterministic solution vs an external
+reference, for both kernels and several times. A visual check is far more intuitive than
+the rel-L2 number and is useful for the paper/slides. Inputs: the 2-column
+`sweeps/ballistic/conc_det_ballistic_t*.dat` (via `to_sizeconc.py`) and the external
+reference `.dat` files.

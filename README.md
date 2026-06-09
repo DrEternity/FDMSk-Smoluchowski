@@ -24,7 +24,6 @@ src/                C++ sources
 CMakeLists.txt      build (fetches the MSk library `zaimsk` automatically)
 README.md           this file
 ANALYSIS.md         optimization journal + Part VII = guide for a NEW kernel (read this!)
-OPTIMIZATION_STORY_MONTECARLO.md   the sister Monte-Carlo project's story
 sweeps/             slurm experiment scripts, the benchmark, and python helpers
   bench.sh          regression+perf benchmark (run after any change)
   run_t1e7.sbatch   large production run (atmospheric, t=1e7)
@@ -153,11 +152,47 @@ After any code change, run the regression+performance benchmark:
 bash sweeps/bench.sh
 ```
 
-It runs both kernels on small cases (~1.5 min) and checks **mass conservation** plus
-**correctness** (atmospheric vs a committed golden, ballistic vs a Monte-Carlo
-reference), reporting wall time and peak RAM with an overall `PASS/FAIL` and exit code.
+It runs both kernels on small cases (~2 min) and checks **mass conservation** plus
+**numerical regression** (rel Frobenius vs committed golden references), reporting wall
+time and peak RAM with an overall `PASS/FAIL` and exit code. It is self-contained (no
+external data). After an *intended* numerical change, refresh the goldens with
+`bash sweeps/bench.sh --make-golden`.
+
+To compare a single run against an external reference solution (two-column
+`size  …  concentration` file), use `sweeps/ref_compare.py <reference.dat> <run_output.txt>`
+(reports density / mass-weighted rel L2); `sweeps/verify.py` does the same vs another
+solver output (Frobenius + mass).
 
 ---
+
+## Recommended configurations
+
+Choosing `MSK_NJOBS` depends on the regime (see ANALYSIS.md for the full sweeps):
+
+* **System fits in RAM** (small/medium grids, ≤ 2²⁰): use a **high** `MSK_NJOBS` (16–32)
+  for speed — memory is not the constraint there.
+* **Large, memory-bound runs** (grids ≥ 2²¹): use a **low** `MSK_NJOBS` (2–4). The
+  convolution's per-block buffers pile up with more workers and will OOM at large size.
+  Also keep `MSK_MIN_BLOCK=1024` and `MSK_REL_TOL=1e-5` (both cut memory a lot, no
+  accuracy loss).
+* **Stiff kernels** (e.g. ballistic): use a **small** `SMOL_ODE_TOL` (≈1e-10) or the
+  explicit RK4 goes unstable and the mass guard will abort the run.
+
+Tested production configs for the atmospheric kernel (single exclusive 376 GB node):
+
+| target | max_size | min_block | n_jobs | rel_tol | ode_tol | wall | peak RAM | mass |
+|---|---|---|---|---|---|---|---|---|
+| **t = 10⁶** | 1048576 (2²⁰) | 1024 | **32** | 1e-5 | 1e-6 | ~174 s | ~50 GB | 0.99994 |
+| **t = 10⁷** | 8388608 (2²³) | 1024 | **4** | 1e-5 | 1e-6 | ~33 min | ~280 GB | 0.99977 |
+
+```bash
+# t = 10^6
+SMOL_TIME=1000000 SMOL_MAX_SIZE=1048576 MSK_MIN_BLOCK=1024 MSK_NJOBS=32 \
+MSK_REL_TOL=1e-5 SMOL_ODE_TOL=1e-6 SMOL_QUIET=1 ./example
+```
+
+Ready-to-submit SLURM versions (with the memory guard and live monitoring) are in
+`sweeps/` — `run_t1e7.sbatch`, `run_ballistic.sbatch`, and the parameter-sweep scripts.
 
 ## ⚠️ Before a large run — read this
 

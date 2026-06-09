@@ -28,7 +28,10 @@ if(NOT zaimsk_FOUND)
         FetchContent_Declare(
                 zaimsk
                 GIT_REPOSITORY https://gitlab.com/bulatral/mosaic-skeleton.git
-                GIT_TAG        dev
+                # Pinned to a fixed commit for reproducibility (was the moving branch
+                # `dev`). This is v1.1.0-14-g750f0ec, the version all results were
+                # produced with. Bump deliberately, then re-run sweeps/bench.sh.
+                GIT_TAG        750f0ec4da487df20b8cf0a01e35921dbaf4a97c
                 PREFIX ${PROJECT_SOURCE_DIR}/external/mosaic-skeleton
                 SOURCE_DIR ${PROJECT_SOURCE_DIR}/external/mosaic-skeleton
                 BINARY_DIR ${PROJECT_BINARY_DIR}/external/mosaic-skeleton

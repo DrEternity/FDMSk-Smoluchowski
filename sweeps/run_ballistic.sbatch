@@ -7,7 +7,7 @@
 #SBATCH --exclusive
 #SBATCH --time=4:00:00
 
-# Deterministic ballistic-kernel solve for comparison with the Monte-Carlo reference.
+# Deterministic ballistic-kernel solve (for comparison against an external reference).
 # Ballistic front grows very fast (~t^4.7) -> watch the size. Pass T and MAX via env:
 #   sbatch --export=ALL,T=,MAX= --output=sweeps/ballistic/bal_t${T}_%j.out run_ballistic.sbatch
 set -u
