@@ -19,10 +19,16 @@
 # for large-scale memory/stability regression use the dedicated slurm sweeps.
 # ============================================================================
 set -u
-ROOT=/home/r.dyachenko/FDMSk-Smoluchowski
-BIN=${BIN:-$ROOT/build_release/example}
+# Repo root derived from this script's location, so the benchmark is portable
+# (works from any clone, not a hardcoded path).
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# Solver binary: prefer build/ (the README default), fall back to build_release/.
+BIN=${BIN:-$ROOT/build/example}
+[ -x "$BIN" ] || BIN=$ROOT/build_release/example
+# Cluster runtime libraries (gcc-14.2 libstdc++ + fftw + openblas). Override LD_LIBRARY_PATH
+# in the environment if you build elsewhere.
 LIBS=/opt/ohpc/pub/compiler/gcc/14.2.0/lib64:/opt/ohpc/pub/libs/gnu14/openmpi5/fftw/3.3.10/lib:/opt/ohpc/pub/libs/gnu14/openblas/0.3.29/lib
-export LD_LIBRARY_PATH=$LIBS OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
+export LD_LIBRARY_PATH=$LIBS:${LD_LIBRARY_PATH:-} OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 GOLD=$ROOT/sweeps/bench/golden
 WORK=$ROOT/sweeps/bench/work
 mkdir -p "$GOLD" "$WORK"
