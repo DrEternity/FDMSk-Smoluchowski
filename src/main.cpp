@@ -1,5 +1,5 @@
 /*
- * Generate Reference Solution for Atmospheric Kernel
+ * Generate a reference solution for the atmospheric or ballistic kernel.
  */
 
 #include "smoluchowski.hpp"
@@ -32,13 +32,14 @@ double kernel_ballistic(uint64_t i, uint64_t j) {
     return sum * sum * diff;
 }
 
-void save_solution(const std::string& filename, double* n, int size, double time) {
+void save_solution(const std::string& filename, double* n, int size, double time,
+                   const char* kernel_name) {
     std::ofstream file(filename);
     if (!file.is_open()) {
         std::cerr << "ERROR: Cannot open file " << filename << std::endl;
         return;
     }
-    file << "# Reference solution for atmospheric kernel\n";
+    file << "# Reference solution for " << kernel_name << " kernel\n";
     file << "# Size: " << size << "\n";
     file << "# Time: " << time << "\n";
     file << "# Format: index concentration\n";
@@ -110,7 +111,8 @@ int main(int argc, char* argv[]) {
         std::cout << "  n[" << i << "] = " << std::scientific << std::setprecision(6) << n_solution[i] << std::endl;
     }
 
-    save_solution(output_file, n_solution, max_size, time);
+    save_solution(output_file, n_solution, max_size, time,
+                  cfg.kernel ? "ballistic" : "atmospheric");
     delete[] n_0;
 
     std::cout << "\nDone!" << std::endl;

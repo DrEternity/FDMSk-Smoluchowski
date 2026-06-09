@@ -1,4 +1,4 @@
-# Reference solution for atmospheric kernel
+# Reference solution for ballistic kernel
 # Size: 8192
 # Time: 10
 # Format: index concentration

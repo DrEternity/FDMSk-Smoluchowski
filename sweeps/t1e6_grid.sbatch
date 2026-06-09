@@ -13,6 +13,9 @@
 # peak memory + mass are tracked too. rel_tol=1e-5 fixed (accuracy-neutral, faster).
 set -u
 ROOT=${SLURM_SUBMIT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}
+# Solver binary: prefer build/ (the README default), fall back to build_release/.
+BIN=${BIN:-$ROOT/build/example}
+[ -x "$BIN" ] || BIN=$ROOT/build_release/example
 LIBS=${SMOL_LIBS:-/opt/ohpc/pub/compiler/gcc/14.2.0/lib64:/opt/ohpc/pub/libs/gnu14/openmpi5/fftw/3.3.10/lib:/opt/ohpc/pub/libs/gnu14/openblas/0.3.29/lib}
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 cd "$ROOT"
@@ -26,7 +29,7 @@ run() {
     local MB=$1 NJ=$2
     local log=$OUT/g6_mb${MB}_nj${NJ}.log
     srun --cpus-per-task=64 --cpu-bind=none env LD_LIBRARY_PATH=$LIBS MSK_NJOBS=$NJ MSK_REL_TOL=1e-5 MSK_MIN_BLOCK=$MB \
-         "$ROOT/build_release/example" "$MAX" "$T" "$OUT/g6_out_mb${MB}_nj${NJ}.txt" 512 0.01 1e-6 > "$log" 2>&1 &
+         "$BIN" "$MAX" "$T" "$OUT/g6_out_mb${MB}_nj${NJ}.txt" 512 0.01 1e-6 > "$log" 2>&1 &
     local SP=$!
     local peak=0 u
     while kill -0 $SP 2>/dev/null; do

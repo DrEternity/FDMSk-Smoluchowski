@@ -12,6 +12,9 @@
 #   sbatch --export=ALL,T=,MAX= --output=sweeps/ballistic/bal_t${T}_%j.out run_ballistic.sbatch
 set -u
 ROOT=${SLURM_SUBMIT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}
+# Solver binary: prefer build/ (the README default), fall back to build_release/.
+BIN=${BIN:-$ROOT/build/example}
+[ -x "$BIN" ] || BIN=$ROOT/build_release/example
 LIBS=${SMOL_LIBS:-/opt/ohpc/pub/compiler/gcc/14.2.0/lib64:/opt/ohpc/pub/libs/gnu14/openmpi5/fftw/3.3.10/lib:/opt/ohpc/pub/libs/gnu14/openblas/0.3.29/lib}
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 cd "$ROOT"
@@ -24,7 +27,7 @@ RUNLOG=$ROOT/sweeps/ballistic/run_t${T}${TAG}.log
 echo "=== ballistic t=$T host=$(hostname) max_size=$MAX nj=$NJ mb=$MB rel_tol=$RELTOL ode_tol=$ODETOL $(date) ==="
 srun --cpus-per-task=64 --cpu-bind=none env LD_LIBRARY_PATH=$LIBS \
      SMOL_KERNEL=ballistic SMOL_MOSAIC=monodiag MSK_NJOBS=$NJ MSK_REL_TOL=$RELTOL MSK_MIN_BLOCK=$MB \
-     "$ROOT/build_release/example" "$MAX" "$T" "$OUT" 256 0.01 "$ODETOL" > "$RUNLOG" 2>&1 &
+     "$BIN" "$MAX" "$T" "$OUT" 256 0.01 "$ODETOL" > "$RUNLOG" 2>&1 &
 SP=$!
 peak=0
 while kill -0 $SP 2>/dev/null; do
