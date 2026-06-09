@@ -1,93 +1,97 @@
-# ANALYSIS — выжимка экспериментов
+# ANALYSIS — distilled experiments
 
-Итог исследования по ускорению детерминированного решателя уравнения Смолуховского
-(FDM + mosaic-skeleton сжатие матрицы ядра, библиотека `zaimsk`). Цели: довести расчёт
-до **t = 10⁷ с сохранением массы** и найти эффективные конфигурации. Ниже — только
-полезная выжимка: ключевые механизмы, числа и таблицы. **Практический гайд для
-запуска НОВОГО ядра — в §6** (читать перед большим прогоном).
+Summary of the work on speeding up the deterministic Smoluchowski solver (FDM +
+mosaic-skeleton compression of the kernel matrix, library `zaimsk`). Goals: reach
+**t = 10⁷ with mass conservation** and find efficient configurations. Below is the useful
+distillation only: key mechanisms, numbers and tables. **The practical guide for running
+a NEW kernel is in §6** (read it before a large run).
 
-Исследованы два ядра, различающиеся однородностью `λ` (`K(ai,aj)=a^λ·K(i,j)`):
-**атмосферное** `λ=−5/9` и **баллистическое** `λ=5/6`. `λ` предсказывает сразу скорость
-роста «фронта» (память) и жёсткость (устойчивость интегратора) — см. §6.
-
----
-
-## 1. Постановка (кратко)
-
-- Коагуляция как система ОДУ на концентрации `n_k(t)`; монодисперсный старт `n[0]=1`.
-- RHS = **gain** (свёртка `Σ_{i+j=k} K(i,j)n_i n_j`, через FFT — `convolve`) − **loss**
-  (матвек `n_k·Σ_j K(k,j)n_j` — `matvec`).
-- Матрица ядра `N×N` плотная, но гладкая вне диагонали → сжимается mosaic-skeleton:
-  Тёплицевы блоки (FFT) + low-rank/dense блоки (BLAS).
-- Интегратор — **адаптивный RK4** с контролем шага по локальной ошибке (`ode_tol`).
-  Сетка **удваивается**, когда «фронт» (где набирается 99.9% массы) доходит до `size/2`.
-- **Масса `Σ n_k·k` — ключевой инвариант и критерий приёмки.** Для `λ≤1` она сохраняется
-  (≈1); любой РОСТ выше 1 — численный артефакт (неустойчивость), см. §4.
+Two kernels were studied, differing in homogeneity `λ` (`K(ai,aj)=a^λ·K(i,j)`):
+**atmospheric** `λ=−5/9` and **ballistic** `λ=5/6`. `λ` predicts both the front-growth
+speed (memory) and the stiffness (integrator stability) — see §6.
 
 ---
 
-## 2. Эталоны и профиль стоимости
+## 1. Problem setup (brief)
 
-Две серии эталонов (в `build/`, до 1048576 точек), различаются ТОЛЬКО `ode_tol`:
+- Coagulation as a system of ODEs for the size concentrations `n_k(t)`; monodisperse
+  start `n[0]=1`.
+- RHS = **gain** (convolution `Σ_{i+j=k} K(i,j)n_i n_j`, via FFT — `convolve`) − **loss**
+  (matvec `n_k·Σ_j K(k,j)n_j` — `matvec`).
+- The `N×N` kernel matrix is dense but smooth off-diagonal → compressed by
+  mosaic-skeleton: Toeplitz blocks (FFT) + low-rank/dense blocks (BLAS).
+- Integrator — **adaptive RK4** with step control on the local error (`ode_tol`).
+  The grid is **doubled** when the "front" (where 99.9% of the mass accumulates)
+  reaches `size/2`.
+- **Mass `Σ n_k·k` is the key invariant and the acceptance criterion.** For `λ≤1` it is
+  conserved (≈1); any GROWTH above 1 is a numerical artifact (instability), see §4.
 
-| серия | ode_tol | назначение |
+---
+
+## 2. Reference solutions and cost profile
+
+Two reference series (in `build/`, up to 1048576 points), differing ONLY in `ode_tol`:
+
+| series | ode_tol | purpose |
 |---|---|---|
-| `reference_solution_atmos_T*` | 1e-6 | быстрый прогон |
-| `new_reference_solution_atmos_T*` | 1e-9 | точный эталон (≈4× дольше) |
+| `reference_solution_atmos_T*` | 1e-6 | fast run |
+| `new_reference_solution_atmos_T*` | 1e-9 | accurate reference (~4× slower) |
 
-Тайминги исходного (−O0, 1 поток) прогона:
+Timings of the original (−O0, single-thread) run:
 
-| T | reference (1e-6) | new_reference (1e-9) | финальный size |
+| T | reference (1e-6) | new_reference (1e-9) | final size |
 |---:|---:|---:|---:|
-| 10 | 4.9 c | 171 c | 512 |
-| 100 | 6.9 c | 216 c | 2048 |
-| 1000 | 14.6 c | 318 c | 8192 |
-| 10000 | 84 c | 795 c | 65536 |
-| 100000 | 351 c | 1968 c | 262144 |
-| 1000000 | 1835 c | 7165 c | 1048576 |
+| 10 | 4.9 s | 171 s | 512 |
+| 100 | 6.9 s | 216 s | 2048 |
+| 1000 | 14.6 s | 318 s | 8192 |
+| 10000 | 84 s | 795 s | 65536 |
+| 100000 | 351 s | 1968 s | 262144 |
+| 1000000 | 1835 s | 7165 s | 1048576 |
 
-**Профиль стоимости (t=10⁶):** время делится **≈ пополам** между построением MSk-аппрок-
-симации (approx) и интегрированием (RHS) — оптимизировать надо обе фазы. Внутри RHS
-свёртка (gain) ≫ матвек (loss) (~18× на size 16384). Крупные эпохи доминируют: две
-последние (524288 + 1048576) ≈ **78%** всего времени.
+**Cost profile (t=10⁶):** time splits **≈ evenly** between building the MSk approximation
+(approx) and integration (the `convolve`/`matvec` calls) — both phases need optimizing.
+Inside the RHS, `convolve` (gain) ≫ `matvec` (loss) (~18× at size 16384). Large epochs
+dominate: the last two (524288 + 1048576) ≈ **78%** of total time.
 
-**Рост фронта (атмосферное ядро) → выбор `max_size`.** Момент `t`, когда фронт доходит
-до `size/2` и триггерит resize, растёт **×~2.7 на удвоение size** (характерный size ∝ t^0.7):
+**Front growth (atmospheric kernel) → choice of `max_size`.** The time `t` at which the
+front reaches `size/2` and triggers a resize grows **×~2.7 per size doubling**
+(characteristic size ∝ t^0.7):
 
 | size | 2¹⁹ | 2²⁰ | 2²¹ | 2²² | 2²³ |
 |---|---|---|---|---|---|
-| фронт→size/2 при t≈ | 4.6e5 | 1.2e6 | 3.3e6 | 9e6 | 2.4e7 |
+| front→size/2 at t≈ | 4.6e5 | 1.2e6 | 3.3e6 | 9e6 | 2.4e7 |
 
-⇒ к t=10⁷ фронт доходит до ~2.3M; финальный size = 2²² (последний resize в 2²³ был бы
-лишь при t≈2.4e7). Масса сохраняется, пока фронт < верха сетки.
+⇒ by t=10⁷ the front reaches ~2.3M; final size = 2²² (a resize into 2²³ would happen only
+at t≈2.4e7). Mass is conserved as long as the front stays below the top of the grid.
 
 ---
 
-## 3. Оптимизация (атмосферное ядро)
+## 3. Optimization (atmospheric kernel)
 
-### 3.1 Параллелизм MSk + флаги компиляции (T=10⁴, size→65536)
+### 3.1 MSk parallelism + compiler flags (T=10⁴, size→65536)
 
-Базовый репозиторий собирался на `-O0` и считал в **один поток** (`approximate(...,1)`).
-Чистый замер на эксклюзивной slurm-ноде (масса 0.99999902 во всех строках, Frobenius
-между конфигами ≲ 5e-13 — физика не меняется):
+The baseline repository built with `-O0` and ran in a **single thread**
+(`approximate(...,1)`). Clean measurement on an exclusive slurm node (mass 0.99999902 in
+every row, Frobenius between configs ≲ 5e-13 — the physics does not change):
 
-| конфиг | wall, c | × vs −O0 |
+| config | wall, s | × vs −O0 |
 |---|---:|---:|
-| −O0, 1 поток | 75.4 | 1.00 |
-| Release `-O3 -march=native`, 1 поток | 43.8 | 1.72 |
+| −O0, 1 thread | 75.4 | 1.00 |
+| Release `-O3 -march=native`, 1 thread | 43.8 | 1.72 |
 | + nj=4 | 17.3 | 4.36 |
 | + nj=8 | 13.3 | 5.67 |
 | **+ nj=16** | **12.9** | **5.85** |
-| + nj=32 | 14.3 | 5.27 (регресс) |
+| + nj=32 | 14.3 | 5.27 (regression) |
 
-**−O3/−march = 1.72×; параллелизм MSk = ещё ~3.4×.** На этом size оптимум nj≈16; nj=32
-регрессирует (HT-контеншн + Amdahl на serial BLAS-1 операциях RK4). На бóльших size
-parallel-доля растёт (на size 262144 уже 7.06× к −O0).
+**−O3/−march = 1.72×; MSk parallelism = a further ~3.4×.** At this size the optimum is
+nj≈16; nj=32 regresses (HT contention + Amdahl on the serial BLAS-1 operations of RK4).
+At larger sizes the parallel fraction grows (already 7.06× vs −O0 at size 262144).
 
-### 3.2 Эффективный конфиг t=10⁶ (грид min_block × n_jobs)
+### 3.2 Efficient config for t=10⁶ (min_block × n_jobs grid)
 
-Память тут не лимитирует (всё влезает) ⇒ цель — wall. Масса всюду 0.999938, между
-конфигами Frobenius ≤4e-7 (они НЕ меняют ответ). **wall, c / пик, ГБ:**
+Memory is not the constraint here (everything fits) ⇒ the target is wall time. Mass is
+0.999938 everywhere, Frobenius between configs ≤4e-7 (they do NOT change the answer).
+**wall, s / peak, GB:**
 
 | min_block \ nj | 4 | 8 | 16 | 32 |
 |---|---|---|---|---|
@@ -97,155 +101,162 @@ parallel-доля растёт (на size 262144 уже 7.06× к −O0).
 | 1024 | 429/36 | 275/39 | 200/48 | **174/50** ⭐ |
 | 2048 | 673/59 | 404/59 | 265/60 | 206/66 |
 
-**Оптимум t=10⁶: `min_block=1024, nj=32` → 174 c, 50 ГБ** (×1.7 к дефолту mb=128/nj=16;
-~×10 к исходному −O0/1поток). `min_block` — рычаг и по памяти, и по скорости (но 2048
-уже медленнее: крупные dense-блоки). Оптимум nj РАСТЁТ с min_block (мало блоков → нет
-pile-up свёртки → потоки масштабируются).
+**Optimum for t=10⁶: `min_block=1024, nj=32` → 174 s, 50 GB** (×1.7 vs the default
+mb=128/nj=16; ~×10 vs the original −O0/1-thread). `min_block` is a lever for both memory
+and speed (but 2048 is already slower: dense diagonal blocks too large). The optimal nj
+GROWS with min_block (fewer blocks → no convolve pile-up → threads scale).
 
-### 3.3 Память — стена и рычаги (критично для t≥2²¹)
+### 3.3 Memory — the wall and the levers (critical for size ≥ 2²¹)
 
-Пик памяти — **транзиент `convolve`**: каждый блок пишет в свой буфер длины `N−(i0+j0)`,
-буферы копятся «в полёте» (много producer-потоков, один аккумулятор). Пик ≈
-(#блоков)×(pile-up от n_jobs), растёт **×~3 на удвоение size** — это, а не сжатая матрица
-(единицы ГБ), убивает по памяти. При `rel_tol=1e-10` добавляется ещё огромный build-скретч
-(∝ ранг). Замеры на size 1048576 (масса идентична, точность не страдает):
+Peak memory is the **`convolve` transient**: each block writes into its own output buffer
+of length `N−(i0+j0)`, and the buffers pile up "in flight" (many producer threads, one
+accumulator). Peak ≈ (#blocks)×(pile-up factor of n_jobs), and it grows **×~3 per size
+doubling** — this, not the compressed matrix (a few GB), is the memory killer. At
+`rel_tol=1e-10` a huge build scratch (∝ rank) adds on top. Measurements at size 1048576
+(mass identical, accuracy unaffected):
 
-| рычаг | значения → пик памяти |
+| lever | values → peak memory |
 |---|---|
-| **n_jobs** (pile-up) | 16 → 150 ГБ; 4 → 111 ГБ; **1 → 18 ГБ** |
-| **min_block** (#блоков) | 128 → 150 ГБ; 512 → 61; **1024 → 51 ГБ** (+ ×2 скорость) |
-| **rel_tol** (build-скретч) | 1e-10 → ~470 ГБ@2²¹ (OOM); **1e-5 → ×16 меньше**, Frobenius vs 1e-10 = 1e-7 |
+| **n_jobs** (pile-up) | 16 → 150 GB; 4 → 111 GB; **1 → 18 GB** |
+| **min_block** (#blocks) | 128 → 150 GB; 512 → 61; **1024 → 51 GB** (+ ×2 speed) |
+| **rel_tol** (build scratch) | 1e-10 → ~470 GB@2²¹ (OOM); **1e-5 → ×16 smaller**, Frobenius vs 1e-10 = 1e-7 |
 
-Вывод: **большой size → НИЗКИЙ nj** (2–4), **`min_block=1024`**, **`rel_tol=1e-5`**.
-(Это зеркально t=10⁶, где система влезает и нужен высокий nj.)
+Conclusion: **large size → LOW nj** (2–4), **`min_block=1024`**, **`rel_tol=1e-5`**.
+(Mirror image of t=10⁶, where the system fits and a high nj is best.)
 
-### 3.4 t=10⁷ — конфиги и достижение цели
+### 3.4 t=10⁷ — configs and reaching the goal
 
-Конфиги на size 2²³ (масса всюду 0.99977; nj≥8 → OOM из-за pile-up свёртки):
+Configs at size 2²³ (mass 0.99977 everywhere; nj≥8 → OOM from convolve pile-up):
 
-| min_block | nj | wall | пик, ГБ | вердикт |
+| min_block | nj | wall | peak, GB | verdict |
 |---:|---:|---:|---:|---|
-| **1024** | **4** | **33 мин** | **280** | ⭐ быстрейший из влезающих |
-| 1024 | 3 | 40 мин | 208 | консервативный |
-| 1024 | 2 | 54 мин | 152 | макс. запас памяти |
+| **1024** | **4** | **33 min** | **280** | ⭐ fastest that fits |
+| 1024 | 3 | 40 min | 208 | conservative |
+| 1024 | 2 | 54 min | 152 | max memory headroom |
 | 512 | 4 | — | 333 | ✗ OOM |
 
-🎯 **t=10⁷ достигнут** (`max_size=2²³, rel_tol=1e-5, min_block=1024, nj=2`, memory-guard):
-final time 10⁷, final size 2²³, **Total mass = 0.99977** (дрейф 2.3e-4 — масса сохранена),
-0 отрицательных, пик 152 ГБ, ~54 мин. Дрейф массы копится за 10⁷ времени (несимметричность
-аппроксимированного ядра + клампинг отрицательных); на эталонах t≤10⁶ он был ~1e-6.
+🎯 **t=10⁷ achieved** (`max_size=2²³, rel_tol=1e-5, min_block=1024, nj=2`, memory guard):
+final time 10⁷, final size 2²³, **Total mass = 0.99977** (drift 2.3e-4 — mass conserved),
+0 negatives, peak 152 GB, ~54 min. The mass drift accumulates over 10⁷ of time
+(asymmetry of the approximated kernel + clamping of negatives); on the t≤10⁶ references
+it was ~1e-6.
 
-> Память РОС­ЛА по ходу прогона по двум причинам: (1) ступеньки на каждом resize (буфер
-> свёртки ∝ size), (2) храповик glibc-арены (освобождённые мегабайтные буферы не
-> возвращаются ОС). Митигация при необходимости:
+> Memory GREW during the run for two reasons: (1) step-ups at each resize (convolve
+> buffer ∝ size); (2) glibc-arena ratchet (freed multi-MB buffers are not returned to the
+> OS). Mitigation if needed:
 > `MALLOC_MMAP_THRESHOLD_=131072 MALLOC_TRIM_THRESHOLD_=131072`.
 
 ---
 
-## 4. Баллистическое ядро (t = 10, 20, 40, 50)
+## 4. Ballistic kernel (t = 10, 20, 40, 50)
 
-Фронт растёт **очень быстро (~t^4.7)**: t=10 → ~1.2K, t=20 → ~65K, t=40 → ~0.4M (2²⁰),
-t=50 → ~1.3M (2²²). Конфиг: `mosaic=monodiag (rho=1)`, остальное как у атмосферного.
+The front grows **very fast (~t^4.7)**: t=10 → ~1.2K, t=20 → ~65K, t=40 → ~0.4M (2²⁰),
+t=50 → ~1.3M (2²²). Config: `mosaic=monodiag (rho=1)`, otherwise like the atmospheric one.
 
-**🔴 Главный урок (жёсткость): баллистике нужен МАЛЫЙ `ode_tol`.** Первый прогон t=40/50
-на `ode_tol=1e-7` дал **РАЗГОН МАССЫ** (1.90 и 2.44 вместо 1.0). Это не физика (λ=5/6<1,
-гелации нет), а неустойчивость явного RK4: контроллер следит за ТОЧНОСТЬЮ, не за
-УСТОЙЧИВОСТЬЮ → шаг перерос предел устойчивости → осцилляции с отрицательными → клампинг
-`y<0→0` добавляет массу → разгон. **Лечение: `ode_tol=1e-10`** удержал шаг ⇒ масса 0.99997.
-(Атмосферное ядро не страдало даже при 1e-6 — баллистика жёстче.) Этот урок встроен в
-солвер как **страж массы** (`SMOL_MASS_GUARD`, §6).
+**🔴 Main lesson (stiffness): the ballistic kernel needs a SMALL `ode_tol`.** The first
+t=40/50 run at `ode_tol=1e-7` gave a **MASS BLOW-UP** (1.90 and 2.44 instead of 1.0). This
+is not physics (λ=5/6<1, no gelation) but an instability of explicit RK4: the controller
+watches ACCURACY, not STABILITY → the step grew past the stability limit → oscillations
+with negatives → the `y<0→0` clamp adds mass → runaway. **Fix: `ode_tol=1e-10`** kept the
+step bounded ⇒ mass 0.99997. (The atmospheric kernel was fine even at 1e-6 — ballistic is
+stiffer.) This lesson is built into the solver as a **mass guard** (`SMOL_MASS_GUARD`, §6).
 
-**Результаты против внешнего эталонного решения** (масса сохранена):
+**Results against an external reference solution** (mass conserved):
 
-| t | rel L2 (плотность) | масса | final size | пик ГБ | ode_tol |
+| t | rel L2 (density) | mass | final size | peak GB | ode_tol |
 |---:|---:|---:|---:|---:|---:|
 | 10 | 0.34% | 0.99999 | 4096 | <1 | 1e-7 |
 | 20 | 0.57% | 0.99998 | 65536 | ~1 | 1e-7 |
 | 40 | 1.70% | 0.99997 | 2²⁰ | 16 | 1e-10 |
 | 50 | 2.28% | 0.99997 | 2²² | 95 | 1e-10 |
 
-Согласие в бульке хорошее (соотношения det/эталон ~0.95–1.06). Большой mass-weighted L2
-(t=50) — это статистический шум эталона в хвосте (единичные частицы на size ~10⁶), не
-ошибка солвера.
+Bulk agreement is good (det/reference ratios ~0.95–1.06). The large mass-weighted L2
+(t=50) is the statistical noise of the reference in the tail (single particles at size
+~10⁶), not a solver error.
 
 ---
 
-## 5. Методология (кратко)
+## 5. Methodology (brief)
 
-- **Железо:** Intel Xeon Gold 6226R (Cascade Lake), 32 физ. ядра (64 HT), AVX-512,
-  376 ГБ RAM, partition `c32m384`. Сборка = запуск ⇒ `-march=native` безопасен.
-- **Где мерить:** только на выделенной slurm-ноде (login шумная). Каждый замер —
-  отдельный sbatch, эксклюзивно.
-- **Корректность:** Frobenius `||n−n_ref||/||n_ref||` ≲ 1e-6 (порядок ODE-допуска) +
-  сохранение массы. Параллельная редукция / `-march` меняют FP на ~1e-13, не физику.
-- **Грабли кластера (для воспроизводимости):** `srun`-шаг в `sbatch` требует ЯВНО
-  `--cpus-per-task=64 --cpu-bind=none` (иначе пин к 1 ядру); `/usr/bin/time` на нодах
-  НЕТ — мерить по выводу программы; пересобранные бинари требуют `LD_LIBRARY_PATH`
-  (gcc-14.2 libstdc++ + openblas + fftw); пик памяти сэмплировать часто (у пика прыжки
-  >16 ГБ за интервал).
+- **Hardware:** Intel Xeon Gold 6226R (Cascade Lake), 32 physical cores (64 HT), AVX-512,
+  376 GB RAM, partition `c32m384`. Build host = run host ⇒ `-march=native` is safe.
+- **Where to measure:** only on a dedicated slurm node (the login node is noisy). Each
+  measurement is a separate, exclusive sbatch.
+- **Correctness:** Frobenius `||n−n_ref||/||n_ref||` ≲ 1e-6 (the ODE-tolerance scale) plus
+  mass conservation. Parallel reduction / `-march` perturb FP by ~1e-13, not the physics.
+- **Cluster gotchas (for reproducibility):** an `srun` step inside `sbatch` needs an
+  EXPLICIT `--cpus-per-task=64 --cpu-bind=none` (otherwise it is pinned to 1 core);
+  `/usr/bin/time` is absent on the nodes — measure from the program's output; rebuilt
+  binaries need `LD_LIBRARY_PATH` (gcc-14.2 libstdc++ + openblas + fftw); sample peak
+  memory frequently (near the peak it jumps >16 GB between samples).
 
 ---
 
-## 6. ГАЙД: запуск симуляции для НОВОГО ядра
+## 6. GUIDE: running a simulation for a NEW kernel
 
-Объединяющий параметр — **однородность `λ`** (`K(ai,aj)=a^λ K(i,j)`). Считай её ПЕРВЫМ:
-она предсказывает и скорость роста фронта (память), и жёсткость (устойчивость).
+The unifying parameter is the **homogeneity `λ`** (`K(ai,aj)=a^λ K(i,j)`). Compute it
+FIRST: it predicts both the front-growth speed (memory) and the stiffness (stability).
 
-> ⚠️ **Самое опасное на практике — ПАМЯТЬ.** Растёт взрывообразно (~×3 на удвоение size)
-> и «улетает в миг» — из-за неё были все аварии (OOM, разгон). Правило: **сначала измерь
-> (дешёвый probe фронта и пика памяти), потом запускай — и всегда под memory-guard.**
+> ⚠️ **The most dangerous thing in practice is MEMORY.** It grows explosively (~×3 per
+> size doubling) and "blows up in an instant" — it caused all our failures (OOM, runaway).
+> Rule: **measure first (a cheap probe of the front and peak memory), then launch — and
+> always under a memory guard.**
 
-**Шаг 0 — классифицируй по `λ`:**
-- `λ > 1` ⇒ **гелация**: масса физически убывает после t_gel — контроль массы как
-  инварианта не применим (нужен отдельный учёт гель-фракции). У нас таких не было.
-- `λ ≤ 1` ⇒ масса сохраняется ⇒ `Total mass ≈ 1` — жёсткий критерий; РОСТ >1 = артефакт.
-- Чем больше `λ`, тем быстрее растёт фронт И тем жёстче система.
+**Step 0 — classify by `λ`:**
+- `λ > 1` ⇒ **gelation**: mass physically decreases after t_gel — mass-as-invariant is no
+  longer the criterion (a separate gel-fraction accounting is needed). We had none such.
+- `λ ≤ 1` ⇒ mass is conserved ⇒ `Total mass ≈ 1` is the hard criterion; GROWTH >1 = artifact.
+- The larger `λ`, the faster the front grows AND the stiffer the system.
 
-**Шаг 1 — устойчивость (`ode_tol`):** явный RK4 устойчив лишь при малом шаге, а контроллер
-следит за точностью, не за устойчивостью. Симптом неустойчивости — **`mass` растёт выше 1**
-(ускоряясь) + фронт перелетает реальный. Правило: чем больше `λ`/size — тем меньше `ode_tol`
-(атм жил на 1e-6; баллистике нужен 1e-10). Начинай с `ode_tol≈1e-9…1e-10`. В солвер встроен
-**🛡 страж массы** (`SMOL_MASS_GUARD`, дефолт 1.02): прогон аварийно останавливается с
-подсказкой «reduce ode_tol», не дожидаясь разгона.
+**Step 1 — stability (`ode_tol`):** explicit RK4 is stable only for a small enough step,
+but the controller watches accuracy, not stability. The instability symptom is **`mass`
+growing above 1** (accelerating) + the front overshooting the real one. Rule: the larger
+`λ`/size, the smaller `ode_tol` (atmospheric was fine at 1e-6; ballistic needed 1e-10).
+Start at `ode_tol≈1e-9…1e-10`. The solver has a built-in **🛡 mass guard**
+(`SMOL_MASS_GUARD`, default 1.02): the run aborts with a "reduce ode_tol" message before a
+full runaway.
 
-**Шаг 2 — `max_size` (фронт ⇄ масса):** масса сохраняется, только если фронт (99.9% массы)
-ниже верха сетки. Оцени фронт при целевом `t` дешёвым малым прогоном/экстраполяцией, возьми
-`max_size` с запасом. Память растёт ×~3 на удвоение — `max_size` это рычаг памяти №1.
+**Step 2 — `max_size` (front ⇄ mass):** mass is conserved only if the front (99.9% of the
+mass) stays below the top of the grid. Estimate the front at the target `t` with a cheap
+small run / extrapolation, and take `max_size` with margin. Memory grows ×~3 per doubling
+— `max_size` is memory lever #1.
 
-**Шаг 3 — память (`n_jobs`, `min_block`, `rel_tol`):**
-- `min_block` ↑ ⇒ меньше блоков ⇒ меньше памяти и часто быстрее. **Дефолт 1024** (2048
-  уже медленнее). Ответ не меняет.
-- `n_jobs` режим-зависим: система влезает в RAM (size ≤ ~2²⁰) → ВЫСОКИЙ nj (16–32);
-  большая (≥2²¹) → НИЗКИЙ nj (2–4), иначе pile-up свёртки даст OOM.
-- `rel_tol` слабее (≤1e-5) ⇒ меньше build-скретча, на точность не влияет. **Не путать с
-  `ode_tol`** (rel_tol — точность аппроксимации ядра; ode_tol — устойчивость по времени).
-- Всегда ставь **memory-guard** (стоп ~340 из 376 ГБ).
+**Step 3 — memory (`n_jobs`, `min_block`, `rel_tol`):**
+- `min_block` ↑ ⇒ fewer blocks ⇒ less memory and often faster. **Default 1024** (2048 is
+  already slower). Does not change the answer.
+- `n_jobs` is regime-dependent: system fits in RAM (size ≤ ~2²⁰) → HIGH nj (16–32); large
+  (≥2²¹) → LOW nj (2–4), otherwise the convolve pile-up causes OOM.
+- `rel_tol` looser (≤1e-5) ⇒ smaller build scratch, no accuracy loss. **Do not confuse
+  with `ode_tol`** (rel_tol — kernel-approximation accuracy; ode_tol — time-stepping
+  stability).
+- Always set a **memory guard** (stop at ~340 of 376 GB).
 
-**Шаг 4 — мозаика (`rho`):** подбирается под сингулярность ядра у диагонали (атм — `tridiag`
-ρ=2, балл — `monodiag` ρ=1). На точность при фикс. `rel_tol` влияет слабо.
+**Step 4 — mosaic (`rho`):** chosen for the kernel's singularity near the diagonal
+(atmospheric — `tridiag` ρ=2, ballistic — `monodiag` ρ=1). At a fixed `rel_tol` it has
+little effect on accuracy.
 
-**Чек-лист контроля во время прогона:**
+**During-run control checklist:**
 
-| метрика | норма | тревога |
+| metric | normal | alarm |
 |---|---|---|
-| `Total mass` | ≈1, стабильна | РОСТ >1 ⇒ неустойчивость (↓ode_tol); сильное падение ⇒ утечка (↑max_size) |
-| `Negative components` | 0 / крошечно | много ⇒ осцилляции (↓ode_tol) |
-| `Final size` vs ожидаемый фронт | совпадает | перелёт ⇒ фейк-масса/неустойчивость |
-| пик RAM | < guard | подход к guard ⇒ ↓nj или ↑min_block |
-| `step` по ходу | растёт умеренно, плато | неограниченный рост ⇒ грядёт разгон |
+| `Total mass` | ≈1, stable | GROWTH >1 ⇒ instability (↓ode_tol); strong drop ⇒ leakage (↑max_size) |
+| `Negative components` | 0 / tiny | many ⇒ oscillations (↓ode_tol) |
+| `Final size` vs expected front | matches | overshoot ⇒ fake mass / instability |
+| peak RAM | < guard | approaching guard ⇒ ↓nj or ↑min_block |
+| `step` over time | grows moderately, plateaus | unbounded growth ⇒ runaway imminent |
 
-**Recipe:** (1) посчитай `λ`; (2) дешёвый разведочный прогон на малом `t` — подбери
-`ode_tol`, пока масса не перестанет расти, замерь фронт и пик памяти; (3) выбери `max_size`
-с запасом; (4) `min_block=1024`, `rel_tol=1e-5`, `n_jobs` по бюджету памяти; (5) запускай
-через slurm с memory-guard + живым мониторингом mass/size/RAM; (6) сверь с эталоном
-(`sweeps/ref_compare.py`). После любой правки кода — `bash sweeps/bench.sh` (регрессия).
+**Recipe:** (1) compute `λ`; (2) cheap recon run at small `t` — tune `ode_tol` until mass
+stops growing, measure the front and peak memory; (3) choose `max_size` with margin;
+(4) `min_block=1024`, `rel_tol=1e-5`, `n_jobs` per the memory budget; (5) launch via slurm
+with a memory guard + live monitoring of mass/size/RAM; (6) compare against a reference
+(`sweeps/ref_compare.py`). After any code change — `bash sweeps/bench.sh` (regression).
 
-**Калибровка по двум ядрам:**
+**Calibration from the two kernels:**
 
-| | атмосферное | баллистическое |
+| | atmospheric | ballistic |
 |---|---|---|
-| `λ` | −5/9 (убывает) | 5/6 (растёт) |
-| рост фронта | медленный (t=10⁷ → 2.3M) | быстрый (t=50 → 1.3M, ~t^4.7) |
-| жёсткость / `ode_tol` | мягкое, 1e-6 ОК | жёсткое, нужен 1e-10 |
-| мозаика | tridiag (ρ=2) | monodiag (ρ=1) |
-| итог по массе | 0.99977 @ t=10⁷ | 0.99997 @ t≤50 |
+| `λ` | −5/9 (decreasing) | 5/6 (increasing) |
+| front growth | slow (t=10⁷ → 2.3M) | fast (t=50 → 1.3M, ~t^4.7) |
+| stiffness / `ode_tol` | mild, 1e-6 OK | stiff, needs 1e-10 |
+| mosaic | tridiag (ρ=2) | monodiag (ρ=1) |
+| mass result | 0.99977 @ t=10⁷ | 0.99997 @ t≤50 |
