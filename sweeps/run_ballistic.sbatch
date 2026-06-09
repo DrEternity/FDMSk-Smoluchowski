@@ -16,9 +16,10 @@ LIBS=/opt/ohpc/pub/compiler/gcc/14.2.0/lib64:/opt/ohpc/pub/libs/gnu14/openmpi5/f
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 cd "$ROOT"
 T=${T:?set T} ; MAX=${MAX:?set MAX}
-NJ=${NJ:-4} ; MB=${MB:-1024} ; RELTOL=${RELTOL:-1e-6} ; ODETOL=${ODETOL:-1e-7} ; GUARD_MB=${GUARD_MB:-340000}
-OUT=$ROOT/sweeps/ballistic/det_ballistic_t${T}.txt
-RUNLOG=$ROOT/sweeps/ballistic/run_t${T}.log
+NJ=${NJ:-4} ; MB=${MB:-1024} ; RELTOL=${RELTOL:-1e-6} ; ODETOL=${ODETOL:-1e-9} ; GUARD_MB=${GUARD_MB:-340000}
+TAG=${TAG:-}    # optional suffix to isolate parallel runs writing the same T
+OUT=$ROOT/sweeps/ballistic/det_ballistic_t${T}${TAG}.txt
+RUNLOG=$ROOT/sweeps/ballistic/run_t${T}${TAG}.log
 
 echo "=== ballistic t=$T host=$(hostname) max_size=$MAX nj=$NJ mb=$MB rel_tol=$RELTOL ode_tol=$ODETOL $(date) ==="
 srun --cpus-per-task=64 --cpu-bind=none env LD_LIBRARY_PATH=$LIBS \
