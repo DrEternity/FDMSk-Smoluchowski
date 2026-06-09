@@ -160,7 +160,7 @@ StepperResult runge_kutta4_adaptive_mass(
 	    // Coagulation can only conserve or lose mass; any GROWTH is numerical
 	    // instability (step beyond the explicit-stability limit, amplified by the
 	    // y<0->0 clamp). Catch it early instead of wasting a long run. See ANALYSIS
-	    // Part VII / the ballistic stiffness lesson.
+	    // §4 / §6 — the ballistic stiffness lesson.
             double total = compute_mass(y, size);
             if (std::isnan(total) || total > mass_limit) {
                 t_current += t_local;

@@ -1,43 +1,77 @@
-# ANALYSIS — distilled experiments
+# ANALYSIS — notes from optimizing the solver
 
-Summary of the work on speeding up the deterministic Smoluchowski solver (FDM +
-mosaic-skeleton compression of the kernel matrix, library `zaimsk`). Goals: reach
-**t = 10⁷ with mass conservation** and find efficient configurations. Below is the useful
-distillation only: key mechanisms, numbers and tables. **The practical guide for running
-a NEW kernel is in §6** (read it before a large run).
+This is the working log from the effort to make our deterministic Smoluchowski solver
+(an FDM discretization plus mosaic-skeleton compression of the kernel matrix, built on the
+`zaimsk` library) both fast and trustworthy enough to reach a single concrete target:
+**simulate out to t = 10⁷ without losing mass.** Getting there meant profiling where the
+time and memory actually go, sweeping the handful of knobs that matter, and getting burned
+twice — once by memory blowing up, once by the integrator going unstable. Those two
+failures shaped every recommendation here, so they get the most space.
 
-Two kernels were studied, differing in homogeneity `λ` (`K(ai,aj)=a^λ·K(i,j)`):
-**atmospheric** `λ=−5/9` and **ballistic** `λ=5/6`. `λ` predicts both the front-growth
-speed (memory) and the stiffness (integrator stability) — see §6.
+If you only read one section, read **§6**: it distills everything below into a step-by-step
+recipe for running a *new* kernel safely. The rest of the document is the evidence behind
+that recipe — the mechanisms, the numbers, and the tables.
 
----
-
-## 1. Problem setup (brief)
-
-- Coagulation as a system of ODEs for the size concentrations `n_k(t)`; monodisperse
-  start `n[0]=1`.
-- RHS = **gain** (convolution `Σ_{i+j=k} K(i,j)n_i n_j`, via FFT — `convolve`) − **loss**
-  (matvec `n_k·Σ_j K(k,j)n_j` — `matvec`).
-- The `N×N` kernel matrix is dense but smooth off-diagonal → compressed by
-  mosaic-skeleton: Toeplitz blocks (FFT) + low-rank/dense blocks (BLAS).
-- Integrator — **adaptive RK4** with step control on the local error (`ode_tol`).
-  The grid is **doubled** when the "front" (where 99.9% of the mass accumulates)
-  reaches `size/2`.
-- **Mass `Σ n_k·k` is the key invariant and the acceptance criterion.** For `λ≤1` it is
-  conserved (≈1); any GROWTH above 1 is a numerical artifact (instability), see §4.
+**The two kernels we studied.** Both are coagulation kernels `K(i,j)` — the rate at which a
+particle of size `i` and one of size `j` stick together — and they differ in a single
+number, the *homogeneity* `λ`, defined by `K(ai, aj) = a^λ · K(i,j)`. We looked at an
+**atmospheric** kernel (`λ = −5/9`) and a **ballistic** one (`λ = 5/6`). That one number
+turns out to be the most predictive parameter in the whole problem: it tells you how fast
+the particle population spreads toward large sizes (which drives memory) and how stiff the
+system is (which drives integrator stability). That theme runs through the entire document
+and is the backbone of §6.
 
 ---
 
-## 2. Reference solutions and cost profile
+## 1. The problem, in brief
 
-Two reference series (in `build/`, up to 1048576 points), differing ONLY in `ode_tol`:
+We solve coagulation as a system of ODEs for the size concentrations `n_k(t)` — `n_k` is
+how much material sits at size `k` — starting from a monodisperse state where everything is
+the smallest size (`n[0] = 1`).
 
-| series | ode_tol | purpose |
+Each evaluation of the right-hand side has two pieces:
+
+- a **gain** term, `½·Σ_{i+j=k} K(i,j) n_i n_j`, which counts the pairs that merge *into*
+  size `k`. It is a convolution, so we compute it with an FFT; in the code this is the call
+  we refer to as **`convolve`**.
+- a **loss** term, `n_k·Σ_j K(k,j) n_j`, which counts size-`k` particles that merge *away*
+  into something larger. It is a matrix–vector product — the **`matvec`** call.
+
+The object both terms need is the `N×N` kernel matrix `K`. It is dense, but away from the
+diagonal it is smooth, and that is exactly what **mosaic-skeleton (MSk)** compression
+exploits: it tiles the matrix into blocks and stores each one cheaply — Toeplitz blocks via
+FFT, the rest as low-rank or small dense blocks via BLAS. That compression is the only
+reason large `N` is tractable at all.
+
+Time stepping is an **adaptive RK4** integrator. It chooses its step size by watching the
+local truncation error against a tolerance we call `ode_tol` — keep that name in mind, it
+is both the hero and the villain of §4. Because the population marches toward ever-larger
+sizes, we do not fix the grid: we track the **front** — the size below which 99.9% of the
+mass sits — and whenever the front reaches the halfway point of the current grid, we
+**double the grid** and carry on. Each such doubling is what we call an *epoch* below.
+
+Finally, the one number that decides whether a run is acceptable: **mass**, `Σ n_k·k`.
+Physically, coagulation only shuffles mass between sizes; it never creates any. So for any
+kernel with `λ ≤ 1` mass is conserved and should stay `≈ 1` for all time, and we use that
+as the hard acceptance test. The corollary matters just as much: if mass ever *grows* above
+1, that is never physics — it is a numerical artifact, and §4 is the story of chasing one
+down.
+
+---
+
+## 2. Reference solutions and where the cost goes
+
+Before optimizing anything we generated trusted reference solutions to check against. There
+are two series sitting in `build/`, both run out to 1048576 grid points and identical
+except for `ode_tol`:
+
+| series | ode_tol | what it's for |
 |---|---|---|
-| `reference_solution_atmos_T*` | 1e-6 | fast run |
-| `new_reference_solution_atmos_T*` | 1e-9 | accurate reference (~4× slower) |
+| `reference_solution_atmos_T*` | 1e-6 | the everyday "fast" run |
+| `new_reference_solution_atmos_T*` | 1e-9 | the tight, accurate reference (~4× slower) |
 
-Timings of the original (−O0, single-thread) run:
+The timings below are for the *original* code — compiled at −O0, single-threaded — and they
+are the baseline that every speedup later is measured against:
 
 | T | reference (1e-6) | new_reference (1e-9) | final size |
 |---:|---:|---:|---:|
@@ -48,31 +82,44 @@ Timings of the original (−O0, single-thread) run:
 | 100000 | 351 s | 1968 s | 262144 |
 | 1000000 | 1835 s | 7165 s | 1048576 |
 
-**Cost profile (t=10⁶):** time splits **≈ evenly** between building the MSk approximation
-(approx) and integration (the `convolve`/`matvec` calls) — both phases need optimizing.
-Inside the RHS, `convolve` (gain) ≫ `matvec` (loss) (~18× at size 16384). Large epochs
-dominate: the last two (524288 + 1048576) ≈ **78%** of total time.
+Profiling a t = 10⁶ run, three things stand out:
 
-**Front growth (atmospheric kernel) → choice of `max_size`.** The time `t` at which the
-front reaches `size/2` and triggers a resize grows **×~2.7 per size doubling**
-(characteristic size ∝ t^0.7):
+- **The two phases cost about the same.** Roughly half the wall time goes into *building*
+  the MSk approximation of the kernel and the other half into *integrating* (the
+  `convolve`/`matvec` calls). Neither dominates, so both had to be optimized.
+- **Within the right-hand side, the gain term is everything.** `convolve` outweighs
+  `matvec` by about 18× at size 16384, so the convolution is where tuning pays off.
+- **The last couple of epochs dominate.** The two largest grids (524288 and 1048576)
+  together eat ≈ 78% of the run. Big-`N` behavior is what matters; the small grids are
+  noise.
+
+**How far does the front travel — and how big must the grid be?** Since the grid doubles
+whenever the front hits the halfway mark, the size you must reserve is set by where the
+front is at your target time. For the atmospheric kernel the characteristic size grows
+roughly as `t^0.7`, which means the time at which the front triggers each resize stretches
+out by about ×2.7 per doubling:
 
 | size | 2¹⁹ | 2²⁰ | 2²¹ | 2²² | 2²³ |
 |---|---|---|---|---|---|
-| front→size/2 at t≈ | 4.6e5 | 1.2e6 | 3.3e6 | 9e6 | 2.4e7 |
+| front reaches size/2 at t ≈ | 4.6e5 | 1.2e6 | 3.3e6 | 9e6 | 2.4e7 |
 
-⇒ by t=10⁷ the front reaches ~2.3M; final size = 2²² (a resize into 2²³ would happen only
-at t≈2.4e7). Mass is conserved as long as the front stays below the top of the grid.
+Reading that off: by t = 10⁷ the atmospheric front has reached ~2.3 million, so the run
+settles at a final grid of 2²² — the next doubling into 2²³ would not be needed until
+t ≈ 2.4×10⁷. And as long as the front stays below the top of the grid, mass has nowhere to
+leak, so it stays conserved.
 
 ---
 
-## 3. Optimization (atmospheric kernel)
+## 3. Optimizing the atmospheric kernel
 
-### 3.1 MSk parallelism + compiler flags (T=10⁴, size→65536)
+### 3.1 The first big wins: compiler flags and MSk threads
 
-The baseline repository built with `-O0` and ran in a **single thread**
-(`approximate(...,1)`). Clean measurement on an exclusive slurm node (mass 0.99999902 in
-every row, Frobenius between configs ≲ 5e-13 — the physics does not change):
+The repository as we inherited it was built at −O0 and ran single-threaded
+(`approximate(..., 1)`). Two cheap changes account for most of the speedup. The
+measurements below come from a clean, exclusive slurm node at t = 10⁴ (final grid 65536);
+reassuringly, every configuration produced the same physics — mass 0.99999902 in every row,
+and the relative Frobenius difference between configurations was ≲ 5e-13, i.e. nothing but
+floating-point dust.
 
 | config | wall, s | × vs −O0 |
 |---|---:|---:|
@@ -83,15 +130,20 @@ every row, Frobenius between configs ≲ 5e-13 — the physics does not change):
 | **+ nj=16** | **12.9** | **5.85** |
 | + nj=32 | 14.3 | 5.27 (regression) |
 
-**−O3/−march = 1.72×; MSk parallelism = a further ~3.4×.** At this size the optimum is
-nj≈16; nj=32 regresses (HT contention + Amdahl on the serial BLAS-1 operations of RK4).
-At larger sizes the parallel fraction grows (already 7.06× vs −O0 at size 262144).
+So turning on `−O3 -march=native` alone buys 1.72×, and handing the MSk block work to
+multiple threads (the `n_jobs` knob) buys roughly another 3.4× on top. At this size the
+sweet spot is about 16 threads; pushing to 32 actually *regresses*, because we start
+fighting hyper-threading contention and Amdahl's law — the serial BLAS-1 vector operations
+inside RK4 do not parallelize, so more threads cannot help them. At larger grids the
+parallel fraction grows and the picture improves (already 7.06× over −O0 at size 262144).
 
-### 3.2 Efficient config for t=10⁶ (min_block × n_jobs grid)
+### 3.2 Picking a config for t = 10⁶
 
-Memory is not the constraint here (everything fits) ⇒ the target is wall time. Mass is
-0.999938 everywhere, Frobenius between configs ≤4e-7 (they do NOT change the answer).
-**wall, s / peak, GB:**
+Here everything fits comfortably in RAM, so memory is not the constraint — the only target
+is wall time. The two knobs worth sweeping are `n_jobs` (how many MSk worker threads) and
+**`min_block`** (the smallest block edge MSk is allowed to cut the matrix into; a bigger
+`min_block` means fewer, larger blocks). Again the physics is untouched: mass 0.999938
+everywhere, Frobenius between configs ≤ 4e-7. Each cell is **wall (s) / peak (GB):**
 
 | min_block \ nj | 4 | 8 | 16 | 32 |
 |---|---|---|---|---|
@@ -101,32 +153,51 @@ Memory is not the constraint here (everything fits) ⇒ the target is wall time.
 | 1024 | 429/36 | 275/39 | 200/48 | **174/50** ⭐ |
 | 2048 | 673/59 | 404/59 | 265/60 | 206/66 |
 
-**Optimum for t=10⁶: `min_block=1024, nj=32` → 174 s, 50 GB** (×1.7 vs the default
-mb=128/nj=16; ~×10 vs the original −O0/1-thread). `min_block` is a lever for both memory
-and speed (but 2048 is already slower: dense diagonal blocks too large). The optimal nj
-GROWS with min_block (fewer blocks → no convolve pile-up → threads scale).
+The winner is **`min_block=1024, n_jobs=32`: 174 s at 50 GB** — about 1.7× faster than the
+old default (mb=128/nj=16) and roughly 10× faster than the original −O0 single-threaded
+code. Two things to take away. First, `min_block` is a genuine lever for both speed and
+memory — but only up to a point: at 2048 it slows down again, because the dense diagonal
+blocks get too large to handle efficiently. Second, the best `n_jobs` *rises* as
+`min_block` rises. That is not a coincidence: with fewer blocks the convolution outputs stop
+piling up (the mechanism in §3.3), and once that bottleneck is gone the threads scale
+cleanly.
 
-### 3.3 Memory — the wall and the levers (critical for size ≥ 2²¹)
+### 3.3 Memory: the real wall, and how to push it back
 
-Peak memory is the **`convolve` transient**: each block writes into its own output buffer
-of length `N−(i0+j0)`, and the buffers pile up "in flight" (many producer threads, one
-accumulator). Peak ≈ (#blocks)×(pile-up factor of n_jobs), and it grows **×~3 per size
-doubling** — this, not the compressed matrix (a few GB), is the memory killer. At
-`rel_tol=1e-10` a huge build scratch (∝ rank) adds on top. Measurements at size 1048576
-(mass identical, accuracy unaffected):
+Everything above was about speed. For grids of 2²¹ and beyond, the binding constraint stops
+being time and becomes **memory** — and it is worth understanding exactly *where* the memory
+goes, because it is not where you would guess.
+
+It is not the compressed matrix (that is only a few GB). The killer is a **transient inside
+`convolve`**. Each block writes its contribution into its own output buffer of length
+`N − (i0+j0)`, and with many producer threads feeding one accumulator, a crowd of these
+buffers is "in flight" at once. Peak memory is therefore roughly (number of blocks) × (a
+pile-up factor that scales with `n_jobs`) — and it grows by about ×3 with every grid
+doubling. On top of that, at a tight `rel_tol` the MSk *builder* needs a large scratch area
+(it scales with block rank), which piles on further.
+
+That decomposition tells you immediately which knobs to turn. Measured at size 1048576 (mass
+identical, accuracy unaffected in every case):
 
 | lever | values → peak memory |
 |---|---|
 | **n_jobs** (pile-up) | 16 → 150 GB; 4 → 111 GB; **1 → 18 GB** |
 | **min_block** (#blocks) | 128 → 150 GB; 512 → 61; **1024 → 51 GB** (+ ×2 speed) |
-| **rel_tol** (build scratch) | 1e-10 → ~470 GB@2²¹ (OOM); **1e-5 → ×16 smaller**, Frobenius vs 1e-10 = 1e-7 |
+| **rel_tol** (build scratch) | 1e-10 → ~470 GB @ 2²¹ (OOM); **1e-5 → ×16 smaller**, Frobenius vs 1e-10 = 1e-7 |
 
-Conclusion: **large size → LOW nj** (2–4), **`min_block=1024`**, **`rel_tol=1e-5`**.
-(Mirror image of t=10⁶, where the system fits and a high nj is best.)
+So the three levers are independent and, for big runs, all point the same way: drop
+`n_jobs`, raise `min_block`, loosen `rel_tol`. Note the last one especially — going from
+rel_tol 1e-10 to 1e-5 shrinks the build scratch ~16× while changing the answer by a
+Frobenius of only 1e-7. This is the exact mirror image of the t = 10⁶ advice in §3.2, where
+the system fits and you *want* many threads.
 
-### 3.4 t=10⁷ — configs and reaching the goal
+**Bottom line for large grids: low `n_jobs` (2–4), `min_block=1024`, `rel_tol=1e-5`.**
 
-Configs at size 2²³ (mass 0.99977 everywhere; nj≥8 → OOM from convolve pile-up):
+### 3.4 Reaching t = 10⁷
+
+Putting §3.3 into practice, here are the configurations we tried at the final grid size 2²³
+(mass 0.99977 in all of them; anything with `n_jobs ≥ 8` ran out of memory from the convolve
+pile-up):
 
 | min_block | nj | wall | peak, GB | verdict |
 |---:|---:|---:|---:|---|
@@ -135,33 +206,56 @@ Configs at size 2²³ (mass 0.99977 everywhere; nj≥8 → OOM from convolve pil
 | 1024 | 2 | 54 min | 152 | max memory headroom |
 | 512 | 4 | — | 333 | ✗ OOM |
 
-🎯 **t=10⁷ achieved** (`max_size=2²³, rel_tol=1e-5, min_block=1024, nj=2`, memory guard):
-final time 10⁷, final size 2²³, **Total mass = 0.99977** (drift 2.3e-4 — mass conserved),
-0 negatives, peak 152 GB, ~54 min. The mass drift accumulates over 10⁷ of time
-(asymmetry of the approximated kernel + clamping of negatives); on the t≤10⁶ references
-it was ~1e-6.
+🎯 **And with that, the goal was met.** Running with `max_size=2²³, rel_tol=1e-5,
+min_block=1024, n_jobs=2` under a memory guard gave: final time 10⁷, final size 2²³,
+**total mass = 0.99977** — a drift of 2.3e-4, i.e. mass conserved — with 0 negative
+components, a 152 GB peak, and ~54 minutes of wall time. (We used the conservative
+`n_jobs=2` row for headroom; the `n_jobs=4` row above is the faster option once you trust
+the memory budget.) The small drift is real but benign: it accumulates slowly over the full
+10⁷ of simulated time, from the slight asymmetry of the *approximated* kernel plus the
+clamping of negative concentrations to zero. On the shorter t ≤ 10⁶ references the same
+drift is only ~1e-6.
 
-> Memory GREW during the run for two reasons: (1) step-ups at each resize (convolve
-> buffer ∝ size); (2) glibc-arena ratchet (freed multi-MB buffers are not returned to the
-> OS). Mitigation if needed:
-> `MALLOC_MMAP_THRESHOLD_=131072 MALLOC_TRIM_THRESHOLD_=131072`.
+One operational wrinkle worth recording: memory kept *climbing* during the run, for two
+reasons. The obvious one is the resizes — the convolve buffer scales with grid size, so
+every epoch steps the peak up. The subtler one is a glibc allocator "ratchet": once it has
+grown its arenas for those multi-megabyte buffers, freed memory is not handed back to the
+OS. If that becomes a problem, forcing large allocations through `mmap` tames it:
+
+```
+MALLOC_MMAP_THRESHOLD_=131072 MALLOC_TRIM_THRESHOLD_=131072
+```
 
 ---
 
-## 4. Ballistic kernel (t = 10, 20, 40, 50)
+## 4. The ballistic kernel — and the instability that taught us the most
 
-The front grows **very fast (~t^4.7)**: t=10 → ~1.2K, t=20 → ~65K, t=40 → ~0.4M (2²⁰),
-t=50 → ~1.3M (2²²). Config: `mosaic=monodiag (rho=1)`, otherwise like the atmospheric one.
+The ballistic kernel (`λ = 5/6`) is a different animal. Its front races outward — roughly as
+`t^4.7` — so it reaches large sizes almost immediately: ~1.2K by t=10, ~65K by t=20, ~0.4M
+(2²⁰) by t=40, ~1.3M (2²²) by t=50. We run it with `mosaic=monodiag` (ρ=1) but otherwise
+just like the atmospheric case.
 
-**🔴 Main lesson (stiffness): the ballistic kernel needs a SMALL `ode_tol`.** The first
-t=40/50 run at `ode_tol=1e-7` gave a **MASS BLOW-UP** (1.90 and 2.44 instead of 1.0). This
-is not physics (λ=5/6<1, no gelation) but an instability of explicit RK4: the controller
-watches ACCURACY, not STABILITY → the step grew past the stability limit → oscillations
-with negatives → the `y<0→0` clamp adds mass → runaway. **Fix: `ode_tol=1e-10`** kept the
-step bounded ⇒ mass 0.99997. (The atmospheric kernel was fine even at 1e-6 — ballistic is
-stiffer.) This lesson is built into the solver as a **mass guard** (`SMOL_MASS_GUARD`, §6).
+**The lesson here — the most important one in this whole document — is about stiffness: the
+ballistic kernel demands a *small* `ode_tol`.** Our first runs at t=40 and t=50 used
+`ode_tol=1e-7`, and the mass *blew up* — 1.90 and 2.44 instead of 1.0. That is physically
+impossible (`λ = 5/6 < 1`, so there is no gelation, no mechanism to create mass), which is
+exactly what flagged it as a numerical failure. Here is the mechanism, because the same trap
+waits for any stiff kernel:
 
-**Results against an external reference solution** (mass conserved):
+> The step controller watches **accuracy**, not **stability**. Explicit RK4 is only stable
+> below a step-size limit, but nothing in the controller knows about that limit — so when
+> the dynamics are stiff, the controller happily grows the step past it. Beyond the limit
+> the solution oscillates and goes negative; our `y < 0 → 0` clamp then quietly *adds* mass
+> on every step; that extra mass feeds back, and the whole thing runs away.
+
+The fix was simply `ode_tol=1e-10`, which holds the step below the stability limit and
+brought mass back to 0.99997. (The atmospheric kernel never needed this — it was fine even
+at 1e-6. Ballistic is just stiffer.) This lesson is now baked into the solver as a **mass
+guard** (`SMOL_MASS_GUARD`, see §6) that aborts a run the moment mass starts climbing,
+instead of letting it waste hours diverging.
+
+With a small enough `ode_tol`, the results line up well against an external reference
+solution (mass conserved throughout):
 
 | t | rel L2 (density) | mass | final size | peak GB | ode_tol |
 |---:|---:|---:|---:|---:|---:|
@@ -170,88 +264,103 @@ stiffer.) This lesson is built into the solver as a **mass guard** (`SMOL_MASS_G
 | 40 | 1.70% | 0.99997 | 2²⁰ | 16 | 1e-10 |
 | 50 | 2.28% | 0.99997 | 2²² | 95 | 1e-10 |
 
-Bulk agreement is good (det/reference ratios ~0.95–1.06). The large mass-weighted L2
-(t=50) is the statistical noise of the reference in the tail (single particles at size
-~10⁶), not a solver error.
+The bulk of the distribution agrees closely (deterministic-to-reference ratios sit around
+0.95–1.06). The one number that looks large — the 2.28% mass-weighted L2 at t=50 — is not a
+solver error; it is statistical noise in the *reference*, which out in the tail is resolving
+single particles at sizes near 10⁶.
 
 ---
 
-## 5. Methodology (brief)
+## 5. How the measurements were made
 
-- **Hardware:** Intel Xeon Gold 6226R (Cascade Lake), 32 physical cores (64 HT), AVX-512,
-  376 GB RAM, partition `c32m384`. Build host = run host ⇒ `-march=native` is safe.
-- **Where to measure:** only on a dedicated slurm node (the login node is noisy). Each
-  measurement is a separate, exclusive sbatch.
-- **Correctness:** Frobenius `||n−n_ref||/||n_ref||` ≲ 1e-6 (the ODE-tolerance scale) plus
-  mass conservation. Parallel reduction / `-march` perturb FP by ~1e-13, not the physics.
-- **Cluster gotchas (for reproducibility):** an `srun` step inside `sbatch` needs an
-  EXPLICIT `--cpus-per-task=64 --cpu-bind=none` (otherwise it is pinned to 1 core);
-  `/usr/bin/time` is absent on the nodes — measure from the program's output; rebuilt
-  binaries need `LD_LIBRARY_PATH` (gcc-14.2 libstdc++ + openblas + fftw); sample peak
-  memory frequently (near the peak it jumps >16 GB between samples).
+A few notes so the numbers above are reproducible, and so you trust them:
+
+- **Hardware.** Intel Xeon Gold 6226R (Cascade Lake), 32 physical cores / 64 hyper-threads,
+  AVX-512, 376 GB RAM, slurm partition `c32m384`. The build host is the run host, so
+  `-march=native` is safe.
+- **Where to measure.** Only on a dedicated slurm node — the login node is too noisy to time
+  anything. Every measurement is its own exclusive `sbatch`.
+- **What "correct" means here.** Two checks together: a relative Frobenius difference
+  `‖n − n_ref‖ / ‖n_ref‖ ≲ 1e-6` (the same scale as `ode_tol`), plus mass conservation.
+  Switching compiler flags or parallel reductions perturbs the floating-point result at the
+  ~1e-13 level — the physics does not move.
+- **Cluster gotchas that cost us time.** An `srun` step inside an `sbatch` must be given an
+  explicit `--cpus-per-task=64 --cpu-bind=none`, or it gets pinned to a single core.
+  `/usr/bin/time` is not installed on the nodes, so peak memory and wall time come from the
+  program's own output. Rebuilt binaries need `LD_LIBRARY_PATH` set (gcc-14.2 libstdc++ +
+  openblas + fftw). And sample memory *often* — near the peak it can jump by more than 16 GB
+  between samples.
 
 ---
 
-## 6. GUIDE: running a simulation for a NEW kernel
+## 6. Guide: running a brand-new kernel
 
-The unifying parameter is the **homogeneity `λ`** (`K(ai,aj)=a^λ K(i,j)`). Compute it
-FIRST: it predicts both the front-growth speed (memory) and the stiffness (stability).
+Everything above converges on one organizing parameter — the homogeneity **`λ`**, from
+`K(ai, aj) = a^λ K(i,j)`. **Compute it first.** It predicts both of the things that can sink
+a run: how fast the front grows (memory) and how stiff the system is (stability).
 
-> ⚠️ **The most dangerous thing in practice is MEMORY.** It grows explosively (~×3 per
-> size doubling) and "blows up in an instant" — it caused all our failures (OOM, runaway).
-> Rule: **measure first (a cheap probe of the front and peak memory), then launch — and
-> always under a memory guard.**
+> ⚠️ **The single most dangerous thing in practice is memory.** It grows ~×3 per grid
+> doubling and blows up in an instant — every one of our failures (OOM, runaway) traced back
+> to it. Hence the rule: **measure first** with a cheap probe of the front and the peak
+> memory, **then launch — and always under a memory guard.**
 
-**Step 0 — classify by `λ`:**
-- `λ > 1` ⇒ **gelation**: mass physically decreases after t_gel — mass-as-invariant is no
-  longer the criterion (a separate gel-fraction accounting is needed). We had none such.
-- `λ ≤ 1` ⇒ mass is conserved ⇒ `Total mass ≈ 1` is the hard criterion; GROWTH >1 = artifact.
-- The larger `λ`, the faster the front grows AND the stiffer the system.
+**Step 0 — classify by `λ`.**
+- `λ > 1` means **gelation**: a finite-time singularity after which mass physically
+  *decreases*. Mass-as-invariant no longer applies; you would need separate gel-fraction
+  bookkeeping. (We never worked in this regime.)
+- `λ ≤ 1` means mass is conserved, so **`Total mass ≈ 1` is your hard pass/fail**, and any
+  growth above 1 is an artifact.
+- The larger `λ` is, the faster the front grows *and* the stiffer the system — both screws
+  tighten together.
 
-**Step 1 — stability (`ode_tol`):** explicit RK4 is stable only for a small enough step,
-but the controller watches accuracy, not stability. The instability symptom is **`mass`
-growing above 1** (accelerating) + the front overshooting the real one. Rule: the larger
-`λ`/size, the smaller `ode_tol` (atmospheric was fine at 1e-6; ballistic needed 1e-10).
-Start at `ode_tol≈1e-9…1e-10`. The solver has a built-in **🛡 mass guard**
-(`SMOL_MASS_GUARD`, default 1.02): the run aborts with a "reduce ode_tol" message before a
-full runaway.
+**Step 1 — stability, via `ode_tol`.** Explicit RK4 is stable only for a small enough step,
+but the controller chases accuracy, not stability, so it will not protect you. The symptom
+of trouble is unmistakable: **mass climbing above 1** (and accelerating), with the front
+overshooting where it physically should be. Rule of thumb: the larger `λ` or the bigger the
+grid, the smaller `ode_tol` needs to be (atmospheric was happy at 1e-6; ballistic needed
+1e-10). Start around 1e-9…1e-10. As a backstop, the solver has a built-in 🛡 **mass guard**
+(`SMOL_MASS_GUARD`, default 1.02) that aborts with a "reduce ode_tol" message before a full
+runaway burns your allocation.
 
-**Step 2 — `max_size` (front ⇄ mass):** mass is conserved only if the front (99.9% of the
-mass) stays below the top of the grid. Estimate the front at the target `t` with a cheap
-small run / extrapolation, and take `max_size` with margin. Memory grows ×~3 per doubling
-— `max_size` is memory lever #1.
+**Step 2 — `max_size`, the front-vs-mass trade.** Mass stays conserved only while the front
+(99.9% of the mass) is below the top of the grid. So estimate where the front will be at
+your target `t` — a cheap small run plus extrapolation is enough — and set `max_size` with
+margin above it. Since memory grows ~×3 per doubling, `max_size` is your number-one memory
+lever.
 
-**Step 3 — memory (`n_jobs`, `min_block`, `rel_tol`):**
-- `min_block` ↑ ⇒ fewer blocks ⇒ less memory and often faster. **Default 1024** (2048 is
-  already slower). Does not change the answer.
-- `n_jobs` is regime-dependent: system fits in RAM (size ≤ ~2²⁰) → HIGH nj (16–32); large
-  (≥2²¹) → LOW nj (2–4), otherwise the convolve pile-up causes OOM.
-- `rel_tol` looser (≤1e-5) ⇒ smaller build scratch, no accuracy loss. **Do not confuse
-  with `ode_tol`** (rel_tol — kernel-approximation accuracy; ode_tol — time-stepping
-  stability).
-- Always set a **memory guard** (stop at ~340 of 376 GB).
+**Step 3 — memory, via `n_jobs`, `min_block`, `rel_tol`.**
+- **`min_block`** — raise it to make fewer, larger blocks: less memory, and often faster.
+  Default to 1024 (2048 is already slower). Does not change the answer.
+- **`n_jobs`** — regime-dependent. If the system fits in RAM (grid ≤ ~2²⁰), go high (16–32)
+  for speed. If it is large (≥ 2²¹), go low (2–4), or the convolve pile-up will OOM you.
+- **`rel_tol`** — loosen it (≤ 1e-5) to shrink the builder's scratch memory at no real
+  accuracy cost. **Do not confuse it with `ode_tol`:** `rel_tol` controls how accurately the
+  *kernel matrix* is approximated; `ode_tol` controls *time-stepping* stability. They are
+  unrelated knobs that merely happen to both be tolerances.
+- Always run under a **memory guard** (stop at ~340 of the 376 GB).
 
-**Step 4 — mosaic (`rho`):** chosen for the kernel's singularity near the diagonal
-(atmospheric — `tridiag` ρ=2, ballistic — `monodiag` ρ=1). At a fixed `rel_tol` it has
-little effect on accuracy.
+**Step 4 — mosaic type (`rho`).** Pick it for how singular the kernel is near the diagonal
+(atmospheric → `tridiag`, ρ=2; ballistic → `monodiag`, ρ=1). At a fixed `rel_tol` it barely
+moves the accuracy.
 
-**During-run control checklist:**
+**What to watch while it runs:**
 
 | metric | normal | alarm |
 |---|---|---|
-| `Total mass` | ≈1, stable | GROWTH >1 ⇒ instability (↓ode_tol); strong drop ⇒ leakage (↑max_size) |
-| `Negative components` | 0 / tiny | many ⇒ oscillations (↓ode_tol) |
+| `Total mass` | ≈ 1, stable | growth > 1 ⇒ instability (lower ode_tol); a strong drop ⇒ leakage (raise max_size) |
+| `Negative components` | 0 / tiny | many ⇒ oscillations (lower ode_tol) |
 | `Final size` vs expected front | matches | overshoot ⇒ fake mass / instability |
-| peak RAM | < guard | approaching guard ⇒ ↓nj or ↑min_block |
-| `step` over time | grows moderately, plateaus | unbounded growth ⇒ runaway imminent |
+| peak RAM | < guard | approaching the guard ⇒ lower nj or raise min_block |
+| `step` over time | grows moderately, then plateaus | unbounded growth ⇒ runaway imminent |
 
-**Recipe:** (1) compute `λ`; (2) cheap recon run at small `t` — tune `ode_tol` until mass
-stops growing, measure the front and peak memory; (3) choose `max_size` with margin;
-(4) `min_block=1024`, `rel_tol=1e-5`, `n_jobs` per the memory budget; (5) launch via slurm
-with a memory guard + live monitoring of mass/size/RAM; (6) compare against a reference
-(`sweeps/ref_compare.py`). After any code change — `bash sweeps/bench.sh` (regression).
+**The recipe, start to finish:** (1) compute `λ`; (2) do a cheap recon run at small `t` —
+tune `ode_tol` until mass stops growing, and read off the front position and peak memory;
+(3) choose `max_size` with margin; (4) set `min_block=1024`, `rel_tol=1e-5`, and `n_jobs` to
+fit your memory budget; (5) launch through slurm with a memory guard and live monitoring of
+mass / size / RAM; (6) compare against a reference with `sweeps/ref_compare.py`. After any
+code change, run `bash sweeps/bench.sh` to catch regressions.
 
-**Calibration from the two kernels:**
+**Calibration from the two kernels we did run:**
 
 | | atmospheric | ballistic |
 |---|---|---|

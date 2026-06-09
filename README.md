@@ -23,13 +23,13 @@ src/                C++ sources
   bench.cpp         the `bench` program — MSk matvec/convolve micro-benchmark
 CMakeLists.txt      build (fetches the MSk library `zaimsk` automatically)
 README.md           this file
-ANALYSIS.md         optimization journal + Part VII = guide for a NEW kernel (read this!)
+ANALYSIS.md         optimization notes + §6 = guide for running a NEW kernel (read this!)
 sweeps/             slurm experiment scripts, the benchmark, and python helpers
   bench.sh          regression+perf benchmark (run after any change)
-  run_t1e7.sbatch   large production run (atmospheric, t=1e7)
+  run_t1e7.sbatch   the production run (atmospheric, t=1e7, best config from ANALYSIS §3.4)
   run_ballistic.sbatch   ballistic-kernel runs
-  *.sbatch          parameter sweeps (memory, threads, min_block)
-  *.py              verify.py / mc_compare.py / to_sizeconc.py (comparison helpers)
+  t1e6_grid.sbatch, run_t1e7_cfg.sbatch   the parameter sweeps behind the ANALYSIS tables
+  *.py              ref_compare.py / verify.py / to_sizeconc.py (comparison helpers)
 external/  build/   fetched library / build trees (git-ignored)
 ```
 
@@ -48,9 +48,9 @@ Smoluchowski layer on top of it.
 | **BLAS + LAPACK** | dense / low-rank block linear algebra and the matvec inside MSk |
 | **pthreads** | MSk's block-parallel thread pool |
 
-So the only first-class code in this repository is `src/` (the solver + config + the
-`example`/`bench` programs); everything mathematically heavy is delegated to `zaimsk`,
-which in turn stands on FFTW3 / BLAS / LAPACK. MPI is disabled (`MSK_USE_MPI=OFF`).
+In other words, the only first-class code in this repository is `src/`; everything
+mathematically heavy is delegated to `zaimsk`, which in turn stands on FFTW3 / BLAS /
+LAPACK. MPI is disabled (`MSK_USE_MPI=OFF`).
 
 ## Requirements
 
@@ -212,10 +212,10 @@ Ready-to-submit SLURM versions (with the memory guard and live monitoring) are i
 Memory grows **explosively** (~×3 per grid doubling) and the explicit RK4 can go
 **unstable** for fast-growing ("stiff") kernels — both bit us hard. The hard-won
 playbook for choosing `max_size`, `ode_tol`, `MSK_NJOBS`, `MSK_MIN_BLOCK` and for
-running a **new kernel** safely is in **[ANALYSIS.md](ANALYSIS.md), Part VII** (with a
-dedicated memory-caution section and a during-run control checklist). In short:
-classify the kernel by its homogeneity `λ`; probe the front/memory on a *small* run
-first; then launch via the `sweeps/` SLURM scripts with the built-in memory guard.
+running a **new kernel** safely is **[ANALYSIS.md §6](ANALYSIS.md)** (with a dedicated
+memory-caution note and a during-run control checklist). In short: classify the kernel by
+its homogeneity `λ`; probe the front and the peak memory on a *small* run first; then
+launch via the `sweeps/` SLURM scripts with the built-in memory guard.
 
 ---
 
