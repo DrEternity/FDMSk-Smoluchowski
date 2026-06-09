@@ -93,9 +93,9 @@ Profiling a t = 10⁶ run, three things stand out:
   together eat ≈ 78% of the run. Big-`N` behavior is what matters; the small grids are
   noise.
 
-**How far does the front travel — and how big must the grid be?** Since the grid doubles
-whenever the front hits the halfway mark, the size you must reserve is set by where the
-front is at your target time. For the atmospheric kernel the characteristic size grows
+How far does the front actually travel, and how big does the grid need to be? Since the grid
+doubles whenever the front hits the halfway mark, the size you must reserve is set by where
+the front is at your target time. For the atmospheric kernel the characteristic size grows
 roughly as `t^0.7`, which means the time at which the front triggers each resize stretches
 out by about ×2.7 per doubling:
 
@@ -104,7 +104,7 @@ out by about ×2.7 per doubling:
 | front reaches size/2 at t ≈ | 4.6e5 | 1.2e6 | 3.3e6 | 9e6 | 2.4e7 |
 
 Reading that off: by t = 10⁷ the atmospheric front has reached ~2.3 million, so the run
-settles at a final grid of 2²² — the next doubling into 2²³ would not be needed until
+settles at a final grid of 2²²; the next doubling into 2²³ would not be needed until
 t ≈ 2.4×10⁷. And as long as the front stays below the top of the grid, mass has nowhere to
 leak, so it stays conserved.
 
@@ -153,20 +153,19 @@ everywhere, Frobenius between configs ≤ 4e-7. Each cell is **wall (s) / peak (
 | 1024 | 429/36 | 275/39 | 200/48 | **174/50** ⭐ |
 | 2048 | 673/59 | 404/59 | 265/60 | 206/66 |
 
-The winner is **`min_block=1024, n_jobs=32`: 174 s at 50 GB** — about 1.7× faster than the
-old default (mb=128/nj=16) and roughly 10× faster than the original −O0 single-threaded
-code. Two things to take away. First, `min_block` is a genuine lever for both speed and
-memory — but only up to a point: at 2048 it slows down again, because the dense diagonal
-blocks get too large to handle efficiently. Second, the best `n_jobs` *rises* as
-`min_block` rises. That is not a coincidence: with fewer blocks the convolution outputs stop
-piling up (the mechanism in §3.3), and once that bottleneck is gone the threads scale
-cleanly.
+The winner is `min_block=1024, n_jobs=32`: 174 s at 50 GB, about 1.7× faster than the old
+default (mb=128/nj=16) and roughly 10× faster than the original −O0 single-threaded code.
+A couple of things are worth noticing. `min_block` is a real lever for both speed and
+memory, but only up to a point: at 2048 it slows down again, because the dense diagonal
+blocks get too large to handle efficiently. And the best `n_jobs` climbs as `min_block`
+does, which is no accident: with fewer blocks the convolution outputs stop piling up (the
+mechanism in §3.3), and once that bottleneck is gone the threads scale cleanly.
 
 ### 3.3 Memory: the real wall, and how to push it back
 
 Everything above was about speed. For grids of 2²¹ and beyond, the binding constraint stops
-being time and becomes **memory** — and it is worth understanding exactly *where* the memory
-goes, because it is not where you would guess.
+being time and becomes memory. It is worth understanding exactly *where* that memory goes,
+because it is not where you would guess.
 
 It is not the compressed matrix (that is only a few GB). The killer is a **transient inside
 `convolve`**. Each block writes its contribution into its own output buffer of length
@@ -206,9 +205,9 @@ pile-up):
 | 1024 | 2 | 54 min | 152 | max memory headroom |
 | 512 | 4 | — | 333 | ✗ OOM |
 
-🎯 **And with that, the goal was met.** Running with `max_size=2²³, rel_tol=1e-5,
+And that did it. Running with `max_size=2²³, rel_tol=1e-5,
 min_block=1024, n_jobs=2` under a memory guard gave: final time 10⁷, final size 2²³,
-**total mass = 0.99977** — a drift of 2.3e-4, i.e. mass conserved — with 0 negative
+**total mass = 0.99977** (a drift of 2.3e-4, i.e. mass conserved), with 0 negative
 components, a 152 GB peak, and ~54 minutes of wall time. (We used the conservative
 `n_jobs=2` row for headroom; the `n_jobs=4` row above is the faster option once you trust
 the memory budget.) The small drift is real but benign: it accumulates slowly over the full
@@ -235,9 +234,9 @@ The ballistic kernel (`λ = 5/6`) is a different animal. Its front races outward
 (2²⁰) by t=40, ~1.3M (2²²) by t=50. We run it with `mosaic=monodiag` (ρ=1) but otherwise
 just like the atmospheric case.
 
-**The lesson here — the most important one in this whole document — is about stiffness: the
-ballistic kernel demands a *small* `ode_tol`.** Our first runs at t=40 and t=50 used
-`ode_tol=1e-7`, and the mass *blew up* — 1.90 and 2.44 instead of 1.0. That is physically
+This is where we learned the most important lesson of the whole project, and it is about
+stiffness: the ballistic kernel demands a **small** `ode_tol`. Our first runs at t=40 and
+t=50 used `ode_tol=1e-7`, and the mass *blew up* — 1.90 and 2.44 instead of 1.0. That is physically
 impossible (`λ = 5/6 < 1`, so there is no gelation, no mechanism to create mass), which is
 exactly what flagged it as a numerical failure. Here is the mechanism, because the same trap
 waits for any stiff kernel:

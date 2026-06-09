@@ -188,9 +188,9 @@ lives in [`src/main.cpp`](src/main.cpp):
 3. **Rebuild and run:** `cmake --build build --target example -j`, then launch with the
    environment variables as usual.
 
-That is the entire code change. Everything after it is parameter choice — and for a new
-kernel that choice is not optional, because the wrong `ode_tol` or `max_size` will silently
-blow up the mass or run you out of memory. **Before any large run, follow
+That's the whole code change. After that it's all parameter choice — but for a new kernel
+those choices aren't optional: the wrong `ode_tol` or `max_size` will silently blow up the
+mass or run you out of memory. **Before any large run, follow
 [ANALYSIS.md §6](ANALYSIS.md) (the new-kernel guide):** compute your kernel's homogeneity
 `λ` (from `K(ai, aj) = a^λ K(i, j)`), which predicts the stiffness (→ how small
 `SMOL_ODE_TOL` must be) and how fast the particle front grows (→ `SMOL_MAX_SIZE` and the
