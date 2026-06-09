@@ -36,12 +36,29 @@ external/  build/   fetched library / build trees (git-ignored)
 
 ---
 
+## Built on
+
+The numerical heavy lifting is **not** in this repo — it lives in the mosaic-skeleton
+library, which CMake fetches and builds automatically. This project is the thin
+Smoluchowski layer on top of it.
+
+| dependency | role here |
+|---|---|
+| **zaimsk** — the Mosaic-Skeleton (MSk) library ([gitlab.com/bulatral/mosaic-skeleton](https://gitlab.com/bulatral/mosaic-skeleton), branch `dev`) | the core: low-rank/block compression of the dense `N×N` kernel matrix, the FFT-based block **convolution** (gain term), the **matvec** (loss term), and the worker thread pool (`MSK_NJOBS`). Fetched via CMake `FetchContent` on the first configure. We also use its helper headers `smart_array` (RAII buffers) and `cpp_blas` (the `BLAS::axpy/copy/nrm2` used by the RK4 stepper). **We do not modify this library.** |
+| **FFTW3** | the FFTs behind MSk's block convolution (built with `MSK_USE_FFT=ON`) |
+| **BLAS + LAPACK** | dense / low-rank block linear algebra and the matvec inside MSk |
+| **pthreads** | MSk's block-parallel thread pool |
+
+So the only first-class code in this repository is `src/` (the solver + config + the
+`example`/`bench` programs); everything mathematically heavy is delegated to `zaimsk`,
+which in turn stands on FFTW3 / BLAS / LAPACK. MPI is disabled (`MSK_USE_MPI=OFF`).
+
 ## Requirements
 
-* C, C++ and Fortran compilers (the MSk library has a Fortran component)
+* C, C++ **and Fortran** compilers (the MSk library has a Fortran component)
 * CMake ≥ 3.20
-* BLAS, LAPACK, FFTW3, pthreads
-* `git` + network access on the first configure (it clones the `zaimsk` MSk library)
+* **BLAS, LAPACK, FFTW3, pthreads** (system libraries linked by `zaimsk`)
+* `git` + network access on the **first** configure (CMake clones `zaimsk` into `external/`)
 
 ---
 
