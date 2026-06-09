@@ -43,7 +43,7 @@ Smoluchowski layer on top of it.
 
 | dependency | role here |
 |---|---|
-| **zaimsk** — the Mosaic-Skeleton (MSk) library ([gitlab.com/bulatral/mosaic-skeleton](https://gitlab.com/bulatral/mosaic-skeleton), branch `dev`) | the core: low-rank/block compression of the dense `N×N` kernel matrix, the FFT-based block **convolution** (gain term), the **matvec** (loss term), and the worker thread pool (`MSK_NJOBS`). Fetched via CMake `FetchContent` on the first configure. We also use its helper headers `smart_array` (RAII buffers) and `cpp_blas` (the `BLAS::axpy/copy/nrm2` used by the RK4 stepper). **We do not modify this library.** |
+| **zaimsk** — the Mosaic-Skeleton (MSk) library ([gitlab.com/bulatral/mosaic-skeleton](https://gitlab.com/bulatral/mosaic-skeleton), pinned to commit `750f0ec` = v1.1.0-14-g750f0ec for reproducibility) | the core: low-rank/block compression of the dense `N×N` kernel matrix, the FFT-based block **convolution** (gain term), the **matvec** (loss term), and the worker thread pool (`MSK_NJOBS`). Fetched via CMake `FetchContent` on the first configure. We also use its helper headers `smart_array` (RAII buffers) and `cpp_blas` (the `BLAS::axpy/copy/nrm2` used by the RK4 stepper). **We do not modify this library.** |
 | **FFTW3** | the FFTs behind MSk's block convolution (built with `MSK_USE_FFT=ON`) |
 | **BLAS + LAPACK** | dense / low-rank block linear algebra and the matvec inside MSk |
 | **pthreads** | MSk's block-parallel thread pool |
@@ -68,7 +68,8 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target example -j
 ```
 
-This produces `build/example` (and `build/bench`). The build defaults to an optimized
+This produces `build/example` (append `--target bench` if you also want the `bench`
+micro-benchmark binary). The build defaults to an optimized
 `Release` and tunes for the host CPU (`-march=native`); pass `-DSMOL_NATIVE=OFF` for a
 portable binary.
 
@@ -154,6 +155,47 @@ SMOL_ODE_TOL=1e-8 MSK_NJOBS=4 SMOL_OUTPUT=ball_t20.txt ./example
 
 The output file lists the concentrations `n[k]` (size `k+1`) one per line, after a short
 header. `sweeps/to_sizeconc.py` converts it to a two-column `size concentration` table.
+
+### Running your own kernel
+
+The **kernel is the only thing you edit in the code** — everything else (grid growth,
+memory, time-stepping) is driven by the parameters above. `SMOL_KERNEL` just switches
+between the two *built-in* kernels; a new one is a small C++ function. The whole pattern
+lives in [`src/main.cpp`](src/main.cpp):
+
+1. **Add your kernel function** next to `kernel_atmos` / `kernel_ballistic`. It returns the
+   coagulation rate `K(i, j)`, where `i` and `j` are the integer particle **sizes** (≥ 1):
+
+   ```cpp
+   double kernel_mine(uint64_t i, uint64_t j) {
+       if (i == j) return /* a finite value */;   // ONLY if your K is singular at i == j
+       return /* your formula for K(i, j) */;
+   }
+   ```
+
+   The `i == j` guard is needed only when your formula divides by something that vanishes on
+   the diagonal — both built-in kernels do, and return a finite constant (`4.0`) there.
+
+2. **Point the solver at it** — replace the built-in selection in `main()` with one line:
+
+   ```cpp
+   std::function<double(double, double)> kernel = kernel_mine;
+   ```
+
+   (After this, `SMOL_KERNEL` is bypassed; `SMOL_MOSAIC` still chooses the diagonal-block
+   type independently — see the ANALYSIS §6 note below.)
+
+3. **Rebuild and run:** `cmake --build build --target example -j`, then launch with the
+   environment variables as usual.
+
+That is the entire code change. Everything after it is parameter choice — and for a new
+kernel that choice is not optional, because the wrong `ode_tol` or `max_size` will silently
+blow up the mass or run you out of memory. **Before any large run, follow
+[ANALYSIS.md §6](ANALYSIS.md) (the new-kernel guide):** compute your kernel's homogeneity
+`λ` (from `K(ai, aj) = a^λ K(i, j)`), which predicts the stiffness (→ how small
+`SMOL_ODE_TOL` must be) and how fast the particle front grows (→ `SMOL_MAX_SIZE` and the
+memory knobs `MSK_NJOBS` / `MSK_MIN_BLOCK` / `MSK_REL_TOL`). It also tells you which
+`SMOL_MOSAIC` (`tridiag` vs `monodiag`) fits your kernel's diagonal.
 
 ---
 
