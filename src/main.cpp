@@ -2,7 +2,7 @@
  * Generate Reference Solution for Atmospheric Kernel
  */
 
-#include "python_var.hpp"
+#include "smoluchowski.hpp"
 #include "config.hpp"
 #include <iostream>
 #include <fstream>

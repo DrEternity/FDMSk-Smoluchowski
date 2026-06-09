@@ -47,9 +47,10 @@ if(NOT zaimsk_FOUND)
         find_package_handle_standard_args(zaimsk DEFAULT_MSG zaimsk_FOUND)
 endif()
 
-set(EXAMPLE_SOURCE main.cpp)
-add_executable(example ${EXAMPLE_SOURCE})
+# `example`: the Smoluchowski solver / reference-solution generator (src/main.cpp,
+# src/smoluchowski.hpp, src/config.hpp). `bench`: MSk matvec/convolve micro-benchmark.
+add_executable(example src/main.cpp)
 target_link_libraries(example PRIVATE zaimsk::zaimsk)
 
-add_executable(bench bench.cpp)
+add_executable(bench src/bench.cpp)
 target_link_libraries(bench PRIVATE zaimsk::zaimsk)

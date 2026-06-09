@@ -24,3 +24,9 @@ sweeps/*.log
 
 # benchmark work dir (regenerable); keep golden refs
 sweeps/bench/work/
+
+# compiled interposer
+*.so
+
+# generated ballistic outputs (large; keep on disk, not in git)
+sweeps/ballistic/
