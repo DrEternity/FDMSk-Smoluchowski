@@ -21,3 +21,6 @@ logs/
 
 # sweep run logs
 sweeps/*.log
+
+# benchmark work dir (regenerable); keep golden refs
+sweeps/bench/work/
