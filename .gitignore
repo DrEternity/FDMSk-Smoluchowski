@@ -30,3 +30,7 @@ sweeps/bench/work/
 
 # generated ballistic outputs (large; keep on disk, not in git)
 sweeps/ballistic/
+
+# local notes / deliverables (not part of the repo)
+TODO.md
+MSK_FEEDBACK.md
