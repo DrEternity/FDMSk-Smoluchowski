@@ -22,8 +22,8 @@
 # 2^22 with front << grid top => mass conserved. A MEMORY GUARD stops the run cleanly
 # if usage approaches the node limit (so a wrong estimate fails safe, not via OOM-kill).
 set -u
-ROOT=/home/r.dyachenko/FDMSk-Smoluchowski
-LIBS=/opt/ohpc/pub/compiler/gcc/14.2.0/lib64:/opt/ohpc/pub/libs/gnu14/openmpi5/fftw/3.3.10/lib:/opt/ohpc/pub/libs/gnu14/openblas/0.3.29/lib
+ROOT=${SLURM_SUBMIT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}
+LIBS=${SMOL_LIBS:-/opt/ohpc/pub/compiler/gcc/14.2.0/lib64:/opt/ohpc/pub/libs/gnu14/openmpi5/fftw/3.3.10/lib:/opt/ohpc/pub/libs/gnu14/openblas/0.3.29/lib}
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 cd "$ROOT"
 

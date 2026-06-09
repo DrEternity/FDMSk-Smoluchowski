@@ -27,7 +27,7 @@ BIN=${BIN:-$ROOT/build/example}
 [ -x "$BIN" ] || BIN=$ROOT/build_release/example
 # Cluster runtime libraries (gcc-14.2 libstdc++ + fftw + openblas). Override LD_LIBRARY_PATH
 # in the environment if you build elsewhere.
-LIBS=/opt/ohpc/pub/compiler/gcc/14.2.0/lib64:/opt/ohpc/pub/libs/gnu14/openmpi5/fftw/3.3.10/lib:/opt/ohpc/pub/libs/gnu14/openblas/0.3.29/lib
+LIBS=${SMOL_LIBS:-/opt/ohpc/pub/compiler/gcc/14.2.0/lib64:/opt/ohpc/pub/libs/gnu14/openmpi5/fftw/3.3.10/lib:/opt/ohpc/pub/libs/gnu14/openblas/0.3.29/lib}
 export LD_LIBRARY_PATH=$LIBS:${LD_LIBRARY_PATH:-} OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 GOLD=$ROOT/sweeps/bench/golden
 WORK=$ROOT/sweeps/bench/work

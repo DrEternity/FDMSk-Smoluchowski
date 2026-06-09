@@ -12,8 +12,8 @@
 # All non-MSk thread sources pinned to 1 so the only parallelism axis is MSK_NJOBS.
 
 set -u
-ROOT=/home/r.dyachenko/FDMSk-Smoluchowski
-export LD_LIBRARY_PATH=/opt/ohpc/pub/compiler/gcc/14.2.0/lib64:${LD_LIBRARY_PATH:-}
+ROOT=${SLURM_SUBMIT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}
+export LD_LIBRARY_PATH=${SMOL_LIBS:-/opt/ohpc/pub/compiler/gcc/14.2.0/lib64}:${LD_LIBRARY_PATH:-}
 export OPENBLAS_NUM_THREADS=1
 export OMP_NUM_THREADS=1
 

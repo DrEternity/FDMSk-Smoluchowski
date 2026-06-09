@@ -12,8 +12,8 @@
 #   --output=sweeps/cfg7_mb${MB}_nj${NJ}_%j.out run_t1e7_cfg.sbatch
 # Memory guard stops cleanly before OOM (so a wrong estimate fails safe).
 set -u
-ROOT=/home/r.dyachenko/FDMSk-Smoluchowski
-LIBS=/opt/ohpc/pub/compiler/gcc/14.2.0/lib64:/opt/ohpc/pub/libs/gnu14/openmpi5/fftw/3.3.10/lib:/opt/ohpc/pub/libs/gnu14/openblas/0.3.29/lib
+ROOT=${SLURM_SUBMIT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}
+LIBS=${SMOL_LIBS:-/opt/ohpc/pub/compiler/gcc/14.2.0/lib64:/opt/ohpc/pub/libs/gnu14/openmpi5/fftw/3.3.10/lib:/opt/ohpc/pub/libs/gnu14/openblas/0.3.29/lib}
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 cd "$ROOT"
 MB=${MB:?set MB} ; NJ=${NJ:?set NJ}

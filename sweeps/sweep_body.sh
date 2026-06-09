@@ -5,10 +5,10 @@
 # Tests H1 (MSk n_jobs block-parallelism) and H2 (-O0 vs -O3/-march).
 
 set -u
-ROOT=/home/r.dyachenko/FDMSk-Smoluchowski
+ROOT=${SLURM_SUBMIT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}
 # Rebuilt binaries (build_release/build_o0) lost the rpath the original had, so we
 # must add FFTW + OpenBLAS lib dirs explicitly (plus gcc-14 libstdc++).
-export LD_LIBRARY_PATH=/opt/ohpc/pub/compiler/gcc/14.2.0/lib64:/opt/ohpc/pub/libs/gnu14/openmpi5/fftw/3.3.10/lib:/opt/ohpc/pub/libs/gnu14/openblas/0.3.29/lib:${LD_LIBRARY_PATH:-}
+export LD_LIBRARY_PATH=${SMOL_LIBS:-/opt/ohpc/pub/compiler/gcc/14.2.0/lib64:/opt/ohpc/pub/libs/gnu14/openmpi5/fftw/3.3.10/lib:/opt/ohpc/pub/libs/gnu14/openblas/0.3.29/lib}:${LD_LIBRARY_PATH:-}
 export OPENBLAS_NUM_THREADS=1
 export OMP_NUM_THREADS=1
 
